@@ -1,0 +1,1239 @@
+{
+  "adapter": "PDXEPS",
+  "version": "1.0.18.4",
+  "supportsReassignLoopLogic": true,
+  "supportBatchRefill": true,
+  "source": "ivr",
+  "destination": "eps",
+  "mergeInfoStatus": true,
+  "storeNumberType": "nhin",
+  "softwareVersnum": "2607",
+  "classOfServiceKey": "LEVEL 1",
+  "transactions": [
+    {
+      "name": "INFO",
+      "request": {
+        "headers": [
+        ],
+        "body": [
+        ]
+      },
+      "response": {
+        "headers": [
+        ],
+        "body": [
+          {
+            "name": "STORE_NUM",
+            "description": "Store Number",
+            "mapFrom": "control.storeNumber",
+            "mapTo": "storeNumber"
+          },
+          {
+            "name": "STATUS",
+            "description": "Status",
+            "mapFrom": "msgStatus.msgStatusCode",
+            "mapTo": "rx.status",
+            "terminatingOutputValues":
+            {
+              "000": {
+                "value":"RxStatus.OK",
+                "shouldContinue": true
+              },
+              "900": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "STATUS_REJECT",
+            "description": "Status Rejected",
+            "mapFrom": "msgStatus.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rx.status",
+            "terminatingOutputValues": {
+              "100": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "101": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "102": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "103": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_NUM",
+            "description": "Rx Number",
+            "mapFrom": "rxDataGroup.rxDataItem.number",
+            "mapTo": "rxNum"
+          },
+          {
+            "name": "RX_STATUS",
+            "description": "Rx Status",
+            "mapFrom": "rxDataGroup.rxDataItem.rxStatusCode",
+            "mapTo": "rx.status",
+            "terminatingOutputValues": {
+              "000": {
+                "value": "RxStatus.OK",
+                "shouldContinue": true
+              },
+              "050": {
+                "value": "RxStatus.OK",
+                "shouldContinue": true
+              },
+              "900": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": true
+              },
+              "950": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": true
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_CODE",
+            "description": "Rx Status Code",
+            "mapFrom": "rxDataGroup.rxDataItem.rxStatusCode",
+            "mapTo": "rx.statusCode",
+            "terminatingOutputValues":
+            {
+              "200": {
+                "value": "RxStatusCode.WAITING_FOR_PRESCRIBER",
+                "shouldContinue": true
+              },
+              "204": {
+                "value": "RxStatusCode.IN_QUEUE",
+                "shouldContinue": true
+              },
+              "205": {
+                "value": "RxStatusCode.UNKNOWN",
+                "shouldContinue": true
+              },
+              "206": {
+                "value": "RxStatusCode.READY_FOR_PICKUP",
+                "shouldContinue": true
+              },
+              "207": {
+                "value": "RxStatusCode.PICKED_UP",
+                "shouldContinue": true
+              },
+              "208": {
+                "value": "RxStatusCode.SHIPPED",
+                "shouldContinue": true
+              },
+              "209": {
+                "value": "RxStatusCode.NOT_IN_QUEUE",
+                "shouldContinue": true
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_REJECT",
+            "description": "Status Rejected",
+            "mapFrom": "rxDataGroup.rxDataItem.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rx.status",
+            "terminatingOutputValues": {
+              "503": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "504": {
+                "value": "RxStatus.BAD_CARD",
+                "shouldContinue": false
+              },
+              "505": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "506": {
+                "value": "RxStatus.TRANSFERRED",
+                "shouldContinue": false
+              },
+              "507": {
+                "value": "RxStatus.DEACTIVATED",
+                "shouldContinue": false
+              },
+              "508": {
+                "value": "RxStatus.OK",
+                "shouldContinue": true
+              },
+              "509": {
+                "value": "RxStatus.NOT_FOUND",
+                "shouldContinue": false
+              },
+              "511": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "512": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "513": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "514": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "515": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "521": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "522": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": false
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_REJECT_CODE",
+            "description": "Status Rejected Code",
+            "mapFrom": "rxDataGroup.rxDataItem.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rx.statusCode",
+            "terminatingOutputValues": {
+              "500": {
+                "value": "RxStatusCode.IN_QUEUE",
+                "shouldContinue": false
+              },
+              "521": {
+                "value": "RxStatusCode.PAT_MUST_CONTACT_DOC",
+                "shouldContinue": true
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_VALID",
+            "description": "Status Rejected Code",
+            "mapFrom": "rxDataGroup.rxDataItem.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rx.statusValid",
+            "terminatingOutputValues": {
+              "508": {
+                "value": "ValidStatus.NEED_PAT_PERM_CONTACT_DOC",
+                "shouldContinue": true
+              },
+              "513": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "514": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "515": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_REFILLABLE",
+            "description": "Rx Refillable",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.refillable",
+            "mapTo": "rx.refillsRemaining",
+            "outputValues":
+            {
+              "Y": "1",
+              "N": "0"
+            }
+          },
+          {
+            "name": "RX_REFILLABLE_REMAININGCOUNT",
+            "description": "Rx Refillable",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.refillable",
+            "mapTo": "rx.refillsRemainingCount",
+            "outputValues":
+            {
+              "Y": "1",
+              "N": "0"
+            }
+          },
+          {
+            "name": "ORIG_REFILLS_COUNT",
+            "description": "Original Refills Authorized",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.authorizedRefills",
+            "mapTo": "rx.originalRefillsCount"
+          },
+          {
+            "name": "SIG_TEXT",
+            "description": "Sig Text",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.sigText",
+            "mapTo": "rx.sigText"
+          },
+          {
+            "name": "AUTOFILL",
+            "description": "Auto-Fill",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.autoFillOption",
+            "mapTo": "rx.autoFill"
+          },
+          {
+            "name": "AUTOFILL_OPTION_DATE",
+            "description": "Auto-Fill Option Date",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.autoFillOptionDate",
+            "dateFormat": "yyyyMMdd",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleDateField",
+            "mapTo": "rx.autoFillOptionDate"
+          },
+          {
+            "name": "PAT_NO_REFILL_OPTION",
+            "description": "Patient No Refill Option",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.callForRefillOption",
+            "mapTo": "rx.patientNoRefillOption",
+            "outputValues":
+            {
+              "D": "PatientNoRefill.PHONE_DR",
+              "P": "PatientNoRefill.PHONE_PATIENT",
+              "N": "PatientNoRefill.DO_NOT_CALL"
+            }
+          },
+          {
+            "name": "RX_EXP_DATE",
+            "description": "Expiration Date",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.rxExpirationDate",
+            "dateFormat": "yyyyMMdd",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleDateField",
+            "mapTo": "rx.expirationDate"
+          },
+          {
+            "name": "RX_EXP_STATUS_VALID",
+            "description": "Setting valid status base on expiration date",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.rxExpirationDate",
+            "dateFormat": "yyyy-MM-dd'T'HH:mm:ss",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleSettingExpiredValid",
+            "mapTo": "rx.statusValid"
+          },
+          {
+            "name": "FIRST_FILL_DATE",
+            "description": "Date of First Fill",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.firstFillDate",
+            "dateFormat": "yyyyMMdd",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleDateField",
+            "mapTo": "rx.firstFillDate"
+          },
+          {
+            "name": "LAST_FILL_DATE",
+            "description": "Last Fill Date",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.lastFillDate",
+            "dateFormat": "yyyyMMdd",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleDateField",
+            "mapTo": "rx.lastFillDate"
+          },
+          {
+            "name": "LAST_FILL_DAY_SUPPLY",
+            "description": "Day Supply on Last Fill",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.dispensedDaysSupply",
+            "mapTo": "rx.lastFillDaySupply"
+          },
+          {
+            "name": "LAST_FILL_QTY",
+            "description": "Last Fill Quantity",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.dispenseQuantity",
+            "mapTo": "rx.lastFillQuantity"
+          },
+          {
+            "name": "QTY_REMAIN",
+            "description": "Quantity Remaining",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.remainingQuantity",
+            "mapTo": "rx.quantityRemaining"
+          },
+          {
+            "name": "ORIG_FILL_QTY",
+            "description": "Original Fill Quantity",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.prescribedQuantity",
+            "mapTo": "rx.originalFillQuantity"
+          },
+          {
+            "name": "PATIENT_AMT_PAID",
+            "description": "Patient Paid Amount",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.patientAmountPaid",
+            "mapTo": "rx.patientAmountPaid"
+          },
+          {
+            "name": "REASSIGNED_RX_NUM",
+            "description": "Reassigned Rx Number",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.reassignedRxNumber",
+            "reassignedRx": true,
+            "mapTo": "rx.reassignedRxNumber"
+          },
+          {
+            "name": "PRESCRIPTION_STATUS",
+            "description": "Prescription Rx Specific Status",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.prescriptionStatus",
+            "mapTo": "rx.status",
+            "terminatingOutputValues": {
+              "D": {
+                "value": "RxStatus.DEACTIVATED",
+                "shouldContinue": false
+              },
+              "T": {
+                "value": "RxStatus.TRANSFERRED",
+                "shouldContinue": false
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name" : "REFILLS_REMAIN",
+            "description": "Refills Remaining Count",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.refillsRemaining",
+            "mapTo": "rx.refillsRemainingCount",
+            "outputValues":
+            {
+              "P": "99",
+              "PRN": "99",
+              "NR": "0"
+            }
+          },
+          {
+            "name": "REFILLS_REMAIN_OOR",
+            "description": "Setting rx out of refill when count is zero",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.refillsRemaining",
+            "mapTo": "rx.statusValid",
+            "outputValues":
+            {
+              "0": "ValidStatus.OUT_OF_REFILLS",
+              "NR": "ValidStatus.OUT_OF_REFILLS",
+              "default": "IGNORE"
+            }
+          },
+          {
+            "name":"FINAL_COPAY",
+            "description": "Final Copay",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.finalCopay",
+            "mapTo": "plan.copay"
+          },
+          {
+            "name":"PRIM_3RDPARTY_CARRIER_ID",
+            "description": "Primary 3rd Party Carrier ID",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.primaryCarrier",
+            "mapTo": "plan.primaryCarrierId"
+          },
+          {
+            "name":"PRIM_3RDPARTY_PLAN_ID",
+            "description": "Primary 3rd Party Plan ID",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.primaryPlan",
+            "mapTo": "plan.primaryPlanId"
+          },
+          {
+            "name":"SEC_3RDPARTY_CARRIER_ID",
+            "description": "Secondary 3rd Party Carrier ID",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.secondaryCarrier",
+            "mapTo": "plan.secondaryCarrierId"
+          },
+          {
+            "name":"SEC_3RDPARTY_PLAN_ID",
+            "description": "Secondary 3rd Party Plan ID",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.secondaryPlan",
+            "mapTo": "plan.secondaryPlanId"
+          },
+          {
+            "name":"TERT_3RDPARTY_CARRIER_ID",
+            "description": "Tertiary 3rd Party Carrier ID",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.tertiaryCarrier",
+            "mapTo": "plan.tertiaryCarrierId"
+          },
+          {
+            "name":"TERT_3RDPARTY_PLAN_ID",
+            "description": "Tertiary 3rd Party Plan ID",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.tertiaryPlan",
+            "mapTo": "plan.tertiaryPlanId"
+          },
+          {
+            "name":"SYNC_ENROLLED",
+            "description": "Sync script enrolled",
+            "mapFrom": "rxDataGroup.rxDataItem.rxInformation.syncScriptEnrolled",
+            "mapTo": "rx.syncScriptEnrolled"
+          },
+          {
+            "name" : "PAT_LAST_NAME",
+            "description": "Patient Name",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.personName.lastName",
+            "mapTo": "patient.name.last"
+          },
+          {
+            "name" : "PAT_FIRST_NAME",
+            "description": "Patient Name",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.personName.firstName",
+            "mapTo": "patient.name.first"
+          },
+          {
+            "name" : "PAT_MIDDLE_NAME",
+            "description": "Patient Name",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.personName.middleName",
+            "mapTo": "patient.name.middle"
+          },
+          {
+            "name" : "PAT_NAME_SUFFIX",
+            "description": "Patient Name",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.personName.nameSuffix",
+            "mapTo": "patient.name.suffix"
+          },
+          {
+            "name": "PAT_LANG",
+            "description": "Patient Language",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.personName.language.value",
+            "mapTo": "patient.language",
+            "outputValues":
+            {
+              "en": "Language.ENGLISH",
+              "es": "Language.SPANISH",
+              "fr": "Language.FRENCH_CANADIAN",
+              "de": "Language.GERMAN",
+              "default": "Language.ENGLISH"
+            }
+          },
+          {
+            "name": "PAT_DOB",
+            "description": "Patient DOB",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.birthDate",
+            "dateFormat": "yyyyMMdd",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleDateField",
+            "mapTo": "patient.dateOfBirth"
+          },
+          {
+            "name": "PAT_GENDER",
+            "description": "Gender",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.genderCode",
+            "mapTo": "patient.gender",
+            "outputValues":
+            {
+              "M": "Gender.MALE",
+              "F": "Gender.FEMALE",
+              "U": "Gender.UNKNOWN"
+            }
+          },
+          {
+            "name": "PAT_PRIMARY_PHONE",
+            "description": "Patient Primary Telephone",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.telephoneGroup.telephoneNumber",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleArrayField",
+            "mapTo": "patient.primaryPhone"
+          },
+          {
+            "name": "PAT_WORK_PHONE",
+            "description": "Patient Work Telephone",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.telephoneGroup.telephoneNumber",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleArrayField",
+            "mapTo": "patient.workPhone"
+          },
+          {
+            "name": "PAT_MOBILE_PHONE",
+            "description": "Patient Mobile Telephone",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.telephoneGroup.telephoneNumber",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleArrayField",
+            "mapTo": "patient.mobilePhone"
+          },
+          {
+            "name": "REQ_SAFETY_CAPS",
+            "description": "Requests Safety Caps",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.safetyCaps",
+            "mapTo": "patient.requestSafetyCap",
+            "outputValues":
+            {
+              "Y": true,
+              "N": false
+            }
+          },
+          {
+            "name": "PAT_STREET_ADDR_1",
+            "description": "Patient Street Address #1",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.address.streetAndNumber",
+            "mapTo": "patient.address.address1"
+          },
+          {
+            "name": "PAT_CITY",
+            "description": "Patient City",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.address.cityName",
+            "mapTo": "patient.address.city"
+          },
+          {
+            "name": "PAT_STATE",
+            "description": "Patient State",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.address.stateName",
+            "mapTo": "patient.address.state"
+          },
+          {
+            "name": "PAT_ZIP",
+            "description": "Patient Zip Code",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.address.postalCode",
+            "mapTo": "patient.address.postalCode"
+          },
+          {
+            "name": "CC_TYPE",
+            "description": "Credit Card Type",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.creditCard.type",
+            "mapTo": "patient.ccInfo1.type",
+            "outputValues":
+            {
+              "1": "CreditCard.MASTERCARD",
+              "2": "CreditCard.VISA",
+              "3": "CreditCard.AMERICAN_EXPRESS",
+              "4": "CreditCard.DISCOVER"
+            }
+          },
+          {
+            "name": "CC",
+            "description": "Credit Card",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.creditCard.number",
+            "mapTo": "patient.ccInfo1.number"
+          },
+          {
+            "name": "CC_EXP",
+            "description": "Credit Card Expiration",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.creditCard.expirationDate",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleYearMonthEndOfMonth",
+            "inputDateFormat": "MMyy",
+            "dateFormat": "yyyyMMdd",
+            "mapTo": "patient.ccInfo1.expiration"
+          },
+          {
+            "name": "PAT_EMAIL",
+            "description": "Patient Email",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.emailAddress",
+            "mapTo": "patient.email"
+          },
+          {
+            "name": "PAT_DL_NUM",
+            "description": "Patient Drivers License Number",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.driverLicense",
+            "mapTo": "patient.driverLicenseNumber"
+          },
+          {
+            "name": "PAT_ACCT",
+            "description": "Patient Account",
+            "mapFrom": "rxDataGroup.rxDataItem.patient.account",
+            "mapTo": "patient.account"
+          },
+          {
+            "name": "DRUG_NAME",
+            "description": "Drug Name",
+            "mapFrom": "rxDataGroup.rxDataItem.drug.productName",
+            "mapTo": "drug.drugName"
+          },
+          {
+            "name":"DRUG_NDC",
+            "description": "Drug NDC",
+            "mapFrom": "rxDataGroup.rxDataItem.drug.ndc",
+            "mapTo": "drug.ndc"
+          },
+          {
+            "name":"DRUG_SCHED",
+            "description": "Drug Schedule",
+            "mapFrom": "rxDataGroup.rxDataItem.drug.schedule",
+            "mapTo": "drug.scheduleOfDrug",
+            "outputValues":
+            {
+              "1": "1",
+              "2": "2",
+              "3": "3",
+              "4": "4",
+              "5": "5",
+              "L": "6",
+              "O": "7",
+              "default": "IGNORE"
+            }
+          },
+          {
+            "name":"DRUG_MAN_NAME",
+            "description": "Drug Manufacturer Name",
+            "mapFrom": "rxDataGroup.rxDataItem.drug.manufacturer",
+            "mapTo": "drug.manufacturerName"
+          },
+          {
+            "name":"DRUG_QTY_ONHAND",
+            "description": "Drug Quantity on Hand",
+            "mapFrom": "rxDataGroup.rxDataItem.drug.quantityOnHand",
+            "mapTo": "drug.quantityOnHand",
+            "outputValues":
+            {
+              " ": null
+            }
+          },
+          {
+            "name":"DRUG_THERAPY_CLASS",
+            "description": "Drug Therapeutic Class",
+            "mapFrom": "rxDataGroup.rxDataItem.drug.therapeuticClass",
+            "mapTo": "drug.therapeuticClass"
+          },
+          {
+            "name":"DOC_ALLOW_FAX",
+            "description": "Doctor Allow Fax",
+            "mapFrom": "rxDataGroup.rxDataItem.prescriber.allowFAX",
+            "mapTo": "prescriber.allowFax",
+            "outputValues":
+            {
+              "Y": true,
+              "N": false
+            }
+          },
+          {
+            "name" : "DOC_LAST_NAME",
+            "description": "Prescriber Last Name",
+            "mapFrom": "rxDataGroup.rxDataItem.prescriber.personName.lastName",
+            "mapTo": "prescriber.name.last"
+          },
+          {
+            "name" : "DOC_FIRST_NAME",
+            "description": "Prescriber First Name",
+            "mapFrom": "rxDataGroup.rxDataItem.prescriber.personName.firstName",
+            "mapTo": "prescriber.name.first"
+          },
+          {
+            "name" : "DOC_MIDDLE_NAME",
+            "description": "Prescriber Middle Name",
+            "mapFrom": "rxDataGroup.rxDataItem.prescriber.personName.middleName",
+            "mapTo": "prescriber.name.middle"
+          },
+          {
+            "name" : "DOC_NAME_SUFFIX",
+            "description": "Prescriber Suffix Name",
+            "mapFrom": "rxDataGroup.rxDataItem.prescriber.personName.nameSuffix",
+            "mapTo": "prescriber.name.suffix"
+          },
+          {
+            "name":"DOC_PHONE",
+            "description": "Doctor Telephone Number",
+            "mapFrom": "rxDataGroup.rxDataItem.prescriber.telephoneGroup.telephoneNumber",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleArrayField",
+            "mapTo": "prescriber.phone"
+          },
+          {
+            "name":"DOC_FAX",
+            "description": "Doctor Fax Number",
+            "mapFrom": "rxDataGroup.rxDataItem.prescriber.telephoneGroup.telephoneNumber",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleArrayField",
+            "mapTo": "prescriber.fax"
+          }
+        ]
+      }
+    },
+    {
+      "name": "STATUS",
+      "request": {
+        "headers": [
+        ],
+        "body": [
+        ]
+      },
+      "response": {
+        "headers": [
+        ],
+        "body": [
+          {
+            "name": "STORE_NUM",
+            "description": "Store Number",
+            "mapFrom": "control.storeNumber",
+            "mapTo": "storeNumber"
+          },
+          {
+            "name": "STATUS",
+            "description": "Status",
+            "mapFrom": "msgStatus.msgStatusCode",
+            "mapTo": "rx.status",
+            "terminatingOutputValues":
+            {
+              "000": {
+                "value":"RxStatus.OK",
+                "shouldContinue": true
+              },
+              "900": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "STATUS_REJECT",
+            "description": "Status Rejected",
+            "mapFrom": "msgStatus.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rx.status",
+            "terminatingOutputValues": {
+              "100": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "101": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "102": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "103": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS",
+            "description": "Rx Status",
+            "mapFrom": "rxStatusGroup.rxStatusItem.rxStatusCode",
+            "mapTo": "rx.status",
+            "terminatingOutputValues": {
+              "000": {
+                "value": "RxStatus.OK",
+                "shouldContinue": true
+              },
+              "050": {
+                "value": "RxStatus.OK",
+                "shouldContinue": true
+              },
+              "900": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": true
+              },
+              "950": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": true
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_CODE",
+            "description": "Rx Status Code",
+            "mapFrom": "rxStatusGroup.rxStatusItem.rxStatusCode",
+            "mapTo": "rx.statusCode",
+            "terminatingOutputValues":
+            {
+              "200": {
+                "value": "RxStatusCode.WAITING_FOR_PRESCRIBER",
+                "shouldContinue": true
+              },
+              "204": {
+                "value": "RxStatusCode.IN_QUEUE",
+                "shouldContinue": true
+              },
+              "205": {
+                "value": "RxStatusCode.UNKNOWN",
+                "shouldContinue": true
+              },
+              "206": {
+                "value": "RxStatusCode.READY_FOR_PICKUP",
+                "shouldContinue": true
+              },
+              "207": {
+                "value": "RxStatusCode.PICKED_UP",
+                "shouldContinue": true
+              },
+              "208": {
+                "value": "RxStatusCode.SHIPPED",
+                "shouldContinue": true
+              },
+              "209": {
+                "value": "RxStatusCode.NOT_IN_QUEUE",
+                "shouldContinue": true
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_REJECT",
+            "description": "Status Rejected",
+            "mapFrom": "rxStatusGroup.rxStatusItem.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rx.status",
+            "terminatingOutputValues": {
+              "503": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "504": {
+                "value": "RxStatus.BAD_CARD",
+                "shouldContinue": false
+              },
+              "505": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "506": {
+                "value": "RxStatus.TRANSFERRED",
+                "shouldContinue": false
+              },
+              "507": {
+                "value": "RxStatus.DEACTIVATED",
+                "shouldContinue": false
+              },
+              "508": {
+                "value": "RxStatus.OK",
+                "shouldContinue": true
+              },
+              "509": {
+                "value": "RxStatus.NOT_FOUND",
+                "shouldContinue": false
+              },
+              "511": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "512": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "513": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "514": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "515": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "521": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "522": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": false
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_REJECT_CODE",
+            "description": "Status Rejected Code",
+            "mapFrom": "rxStatusGroup.rxStatusItem.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rx.statusCode",
+            "terminatingOutputValues": {
+              "500": {
+                "value": "RxStatusCode.IN_QUEUE",
+                "shouldContinue": false
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "PROMISE_DATE_TIME",
+            "description": "Promise Date Time",
+            "mapFrom": "rxStatusGroup.rxStatusItem.promiseDateTime",
+            "dateFormat": "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleDateField",
+            "mapTo": "rx.promiseDateTime"
+          },
+          {
+            "name": "RELEASE_DATE",
+            "description": "release_date",
+            "mapFrom": "rxStatusGroup.rxStatusItem.deliveredDaysAgo",
+            "dateFormat": "yyyyMMdd",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleDaysAgo",
+            "mapTo": "rx.releaseDate"
+          },
+          {
+            "name": "SHIPPER_NAME",
+            "description": "Shipper Name",
+            "mapFrom": "rxStatusGroup.rxStatusItem.shipperName",
+            "mapTo": "rx.shipperName"
+          },
+          {
+            "name": "SHIPPER_TRACKING_NUMBER",
+            "description": "Shipping Tracking Number",
+            "mapFrom": "rxStatusGroup.rxStatusItem.shipperTrackingNumber",
+            "mapTo": "rx.shipperTrackingNumber"
+          },
+          {
+            "name": "SHIP_DATETIME",
+            "description": "Ship Date Time",
+            "mapFrom": "rxStatusGroup.rxStatusItem.shipDateTime",
+            "dateFormat": "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "handleMethod": "com.omnicell.pms.service.adapters.PDXEPS.handleDateField",
+            "mapTo": "rx.shipDateTime"
+          },
+          {
+            "name": "ORDER_NUMBER",
+            "description": "Order Number",
+            "mapFrom": "rxStatusGroup.rxStatusItem.orderNumber",
+            "mapTo": "rx.orderNumber"
+          }
+        ]
+      }
+    },
+    {
+      "name": "REFILL",
+      "request": {
+        "headers": [
+        ],
+        "body": [
+        ]
+      },
+      "response": {
+        "headers": [
+        ],
+        "body": [
+          {
+            "name": "STORE_NUM",
+            "description": "Store Number",
+            "mapFrom": "control.storeNumber",
+            "mapTo": "rxs.lastFillStoreNum"
+          },
+          {
+            "name": "STATUS",
+            "description": "Status",
+            "mapFrom": "msgStatus.msgStatusCode",
+            "mapTo": "rxs.status",
+            "terminatingOutputValues":
+            {
+              "000": {
+                "value":"RxStatus.OK",
+                "shouldContinue": true
+              },
+              "900": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "STATUS_REJECT",
+            "description": "Status Rejected",
+            "mapFrom": "msgStatus.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rxs.status",
+            "terminatingOutputValues": {
+              "100": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "101": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "102": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "103": {
+                "value": "RxStatus.SECURITY_VIOLATION",
+                "shouldContinue": false
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_NUM",
+            "description": "Rx Number",
+            "mapFrom": "rxStatusGroup.rxStatusItem.number",
+            "mapTo": "rxs.rxNum"
+          },
+          {
+            "name": "RX_STATUS",
+            "description": "Rx Status",
+            "mapFrom": "rxStatusGroup.rxStatusItem.rxStatusCode",
+            "mapTo": "rxs.status",
+            "terminatingOutputValues": {
+              "000": {
+                "value": "RxStatus.OK",
+                "shouldContinue": true
+              },
+              "050": {
+                "value": "RxStatus.OK",
+                "shouldContinue": true
+              },
+              "900": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": true
+              },
+              "950": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": true
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_CODE",
+            "description": "Rx Status Code",
+            "mapFrom": "rxStatusGroup.rxStatusItem.rxStatusCode",
+            "mapTo": "rxs.statusCode",
+            "terminatingOutputValues":
+            {
+              "200": {
+                "value": "RxStatusCode.WAITING_FOR_PRESCRIBER",
+                "shouldContinue": true
+              },
+              "204": {
+                "value": "RxStatusCode.IN_QUEUE",
+                "shouldContinue": true
+              },
+              "205": {
+                "value": "RxStatusCode.UNKNOWN",
+                "shouldContinue": true
+              },
+              "206": {
+                "value": "RxStatusCode.READY_FOR_PICKUP",
+                "shouldContinue": true
+              },
+              "207": {
+                "value": "RxStatusCode.PICKED_UP",
+                "shouldContinue": true
+              },
+              "208": {
+                "value": "RxStatusCode.SHIPPED",
+                "shouldContinue": true
+              },
+              "209": {
+                "value": "RxStatusCode.NOT_IN_QUEUE",
+                "shouldContinue": true
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_REJECT",
+            "description": "Status Rejected",
+            "mapFrom": "rxStatusGroup.rxStatusItem.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rxs.status",
+            "terminatingOutputValues": {
+              "503": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "504": {
+                "value": "RxStatus.BAD_CARD",
+                "shouldContinue": false
+              },
+              "505": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "506": {
+                "value": "RxStatus.TRANSFERRED",
+                "shouldContinue": false
+              },
+              "507": {
+                "value": "RxStatus.DEACTIVATED",
+                "shouldContinue": false
+              },
+              "508": {
+                "value": "RxStatus.OK",
+                "shouldContinue": true
+              },
+              "509": {
+                "value": "RxStatus.NOT_FOUND",
+                "shouldContinue": false
+              },
+              "511": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "512": {
+                "value": "RxStatus.STORE_UNABLE_TO_MAIL",
+                "shouldContinue": true
+              },
+              "513": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "514": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "515": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "521": {
+                "value": "RxStatus.NOT_REFILLABLE",
+                "shouldContinue": true
+              },
+              "522": {
+                "value": "RxStatus.UNKNOWN",
+                "shouldContinue": false
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          },
+          {
+            "name": "RX_STATUS_REJECT_CODE",
+            "description": "Status Rejected Code",
+            "mapFrom": "rxStatusGroup.rxStatusItem.rejectCodeGroup.rejectCode.code",
+            "mapTo": "rxs.statusCode",
+            "terminatingOutputValues": {
+              "500": {
+                "value": "RxStatusCode.IN_QUEUE",
+                "shouldContinue": true
+              },
+              "default": {
+                "value": "IGNORE",
+                "shouldContinue": true
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
+

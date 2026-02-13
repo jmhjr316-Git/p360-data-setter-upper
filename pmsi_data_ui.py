@@ -42,6 +42,7 @@ class PMSIDataUI:
                 "patient_phone": {"label": "Patient Phone", "type": "text", "required": True},
             },
             "Prescription Information": {
+                "rx_number": {"label": "RX Number", "type": "text", "required": True},
                 "rx_status": {"label": "RX Status", "type": "dropdown", "options": ["Active", "Inactive", "Pending", "Expired"], "required": True},
                 "medication_name": {"label": "Medication Name", "type": "text", "required": True},
                 "strength": {"label": "Strength", "type": "text", "required": True},
@@ -344,8 +345,10 @@ class PMSIDataUI:
             with open(config_path, 'r') as f:
                 config = json.load(f)
             
-            # Generate RX number
-            rx_number = str(random.randint(1000000, 9999999))
+            # Generate RX number from form data or create one
+            rx_number = data.get("rx_number", "").strip()
+            if not rx_number:
+                rx_number = str(random.randint(1000000, 9999999))
             
             # Prepare template variables
             template_vars = self.prepare_template_variables(data, rx_number, config)
