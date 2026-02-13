@@ -36,5 +36,8 @@ ENV/
 Thumbs.db
 
 # Project specific
-pmsi_data_*.json
+pmsi_*.json
 *.log
+
+# Generated files
+*Response*.xml

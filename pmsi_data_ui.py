@@ -7,10 +7,12 @@ A cross-platform GUI for managing PMSI simulator files and data.
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, simpledialog
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, Any
 import requests
 from urllib.parse import urlencode
+import os
+import random
 try:
     from tkcalendar import DateEntry
     HAS_CALENDAR = True
@@ -28,6 +30,11 @@ class PMSIDataUI:
         
         # Data fields configuration - easily expandable
         self.data_fields = {
+            "PMSI Configuration": {
+                "pmsi_type": {"label": "PMSI Type", "type": "dropdown", 
+                             "options": ["PDX EPS", "Liberty", "McKesson", "Epic", "AtebGen100", "PDX 275"], 
+                             "required": True, "default": "PDX EPS"},
+            },
             "Patient Information": {
                 "patient_first_name": {"label": "Patient First Name", "type": "text", "required": True},
                 "patient_last_name": {"label": "Patient Last Name", "type": "text", "required": True},
@@ -87,6 +94,8 @@ class PMSIDataUI:
         # Action buttons
         ttk.Button(buttons_frame, text="Generate Preview", 
                   command=self.generate_preview).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Generate Files", 
+                  command=self.generate_files).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Save Data", 
                   command=self.save_data).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Load Data", 
@@ -137,6 +146,9 @@ class PMSIDataUI:
         # Input widget based on type
         if config["type"] == "dropdown":
             widget = ttk.Combobox(field_frame, values=config["options"], state="readonly")
+            # Set default value if specified
+            if config.get("default"):
+                widget.set(config["default"])
             widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
         elif config["type"] == "date":
             # Create frame for date entry and button
@@ -317,7 +329,96 @@ class PMSIDataUI:
                     widget.delete(0, tk.END)
             self.preview_text.delete(1.0, tk.END)
     
-    def open_calendar(self, entry_widget):
+    def generate_files(self):
+        """Generate XML files from templates based on form data"""
+        data = self.get_form_data()
+        is_valid, error_msg = self.validate_data(data)
+        
+        if not is_valid:
+            messagebox.showerror("Validation Error", error_msg)
+            return
+        
+        try:
+            # Load template configuration
+            config_path = os.path.join("templates", "template_config.json")
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Generate RX number
+            rx_number = str(random.randint(1000000, 9999999))
+            
+            # Prepare template variables
+            template_vars = self.prepare_template_variables(data, rx_number, config)
+            
+            # Generate files
+            generated_files = []
+            for file_config in config["required_files"]:
+                template_path = os.path.join("templates", file_config["template"])
+                output_filename = file_config["output_pattern"].format(rx_number=rx_number)
+                
+                # Read template
+                with open(template_path, 'r') as f:
+                    template_content = f.read()
+                
+                # Replace tokens
+                for key, value in template_vars.items():
+                    template_content = template_content.replace(f"{{{{{key}}}}}", str(value))
+                
+                # Write output file
+                with open(output_filename, 'w') as f:
+                    f.write(template_content)
+                
+                generated_files.append(output_filename)
+            
+            # Show success message
+            files_list = "\n".join(generated_files)
+            messagebox.showinfo("Success", f"Generated files:\n{files_list}\n\nRX Number: {rx_number}")
+            
+            # Update preview with file info
+            preview = f"=== Generated Files ===\n\nRX Number: {rx_number}\n\nFiles created:\n"
+            for filename in generated_files:
+                preview += f"  - {filename}\n"
+            preview += f"\nGenerated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            
+            self.preview_text.delete(1.0, tk.END)
+            self.preview_text.insert(1.0, preview)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate files: {str(e)}")
+    
+    def prepare_template_variables(self, data: Dict[str, Any], rx_number: str, config: Dict) -> Dict[str, str]:
+        """Prepare variables for template replacement"""
+        # Get RX status mapping
+        rx_status = data.get("rx_status", "Active")
+        status_mapping = config["template_mappings"].get(rx_status, config["template_mappings"]["Active"])
+        
+        # Current datetime
+        current_dt = datetime.now()
+        promise_dt = current_dt + timedelta(days=2)
+        
+        # Prepare all template variables
+        template_vars = {
+            "rx_number": rx_number,
+            "current_datetime": current_dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
+            "promise_datetime": promise_dt.strftime("%Y-%m-%dT%H:%M:%S"),
+            "pmsi_store_id": data.get("pmsi_store_id", "70050001"),
+            "patient_first_name": data.get("patient_first_name", "").upper(),
+            "patient_last_name": data.get("patient_last_name", "").upper(),
+            "patient_dob": data.get("patient_dob", ""),
+            "patient_phone": data.get("patient_phone", ""),
+            "medication_name": data.get("medication_name", "").upper(),
+            "strength": data.get("strength", ""),
+            "units": data.get("units", "").upper(),
+            "last_fill_date": data.get("last_fill_date", ""),
+            "expiration_date": data.get("expiration_date", ""),
+            "copay": data.get("copay", "0.00"),
+            "refillable": status_mapping["refillable"],
+            "prescription_status": status_mapping["prescription_status"],
+            "rx_status_code": status_mapping["rx_status_code"],
+            "rx_status_description": status_mapping["rx_status_description"]
+        }
+        
+        return template_vars
         """Open a simple calendar popup for date selection"""
         cal_window = tk.Toplevel(self.root)
         cal_window.title("Select Date")

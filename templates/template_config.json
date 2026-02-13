@@ -1,0 +1,62 @@
+{
+  "template_mappings": {
+    "Active": {
+      "refillable": "Y",
+      "prescription_status": "A",
+      "rx_status_code": "000",
+      "rx_status_description": "000 = Rx Accepted"
+    },
+    "Inactive": {
+      "refillable": "N",
+      "prescription_status": "I",
+      "rx_status_code": "100",
+      "rx_status_description": "100 = Rx Inactive"
+    },
+    "Pending": {
+      "refillable": "N",
+      "prescription_status": "P",
+      "rx_status_code": "050",
+      "rx_status_description": "050 = Rx Pending"
+    },
+    "Expired": {
+      "refillable": "Y",
+      "prescription_status": "E",
+      "rx_status_code": "207",
+      "rx_status_description": "207 = Picked up"
+    }
+  },
+  "required_files": [
+    {
+      "template": "RefillResponse_template.xml",
+      "output_pattern": "RefillResponse{rx_number}.xml"
+    },
+    {
+      "template": "RxResponse_template.xml", 
+      "output_pattern": "RxResponse{rx_number}.xml"
+    },
+    {
+      "template": "StatusResponse_template.xml",
+      "output_pattern": "StatusResponse{rx_number}.xml"
+    }
+  ],
+  "dynamic_fields": {
+    "rx_number": "Generated 7-digit number",
+    "current_datetime": "Current timestamp in ISO format",
+    "promise_datetime": "Current date + 2 days",
+    "pmsi_store_id": "From form data",
+    "patient_first_name": "From form data",
+    "patient_last_name": "From form data", 
+    "patient_dob": "From form data",
+    "patient_phone": "From form data",
+    "medication_name": "From form data",
+    "strength": "From form data",
+    "units": "From form data",
+    "last_fill_date": "From form data",
+    "expiration_date": "From form data",
+    "copay": "From form data",
+    "refillable": "Based on rx_status mapping",
+    "prescription_status": "Based on rx_status mapping",
+    "rx_status_code": "Based on rx_status mapping",
+    "rx_status_description": "Based on rx_status mapping"
+  }
+}
