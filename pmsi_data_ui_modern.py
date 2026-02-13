@@ -686,13 +686,16 @@ class ModernPMSIUI:
                 fill_date_formatted = rx.get("last_fill_date", "").replace("-", "")
                 expire_date_formatted = rx.get("expiration_date", "").replace("-", "")
                 
+                # Generate unique GPI for each prescription
+                unique_gpi = f"34000003100340{random.randint(0, 9)}"
+                
                 prescription = {
                     "fillDate": fill_date_formatted,
                     "soldDate": fill_date_formatted,
                     "expireDate": expire_date_formatted,
                     "originalRefillsAuth": 7.0,
                     "medication": {
-                        "gpi": "34000003100340",
+                        "gpi": unique_gpi,
                         "medicationName": rx.get("medication_name", "").upper(),
                         "speakableMedName": rx.get("medication_name", "").upper(),
                         "ndc": "65162000850"
@@ -706,7 +709,7 @@ class ModernPMSIUI:
                     "autofillProgram": False,
                     "patientRxId": float(ateb_patient_id + len(prescriptions)),
                     "medicationName": rx.get("medication_name", "").upper(),
-                    "gpi": "34000003100340",
+                    "gpi": unique_gpi,
                     "ndc": "65162000850",
                     "prescriptionStoreNpi": str(random.randint(1000000000, 9999999999))
                 }
