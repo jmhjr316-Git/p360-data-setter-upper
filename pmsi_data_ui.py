@@ -97,6 +97,8 @@ class PMSIDataUI:
                   command=self.generate_preview).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Generate Files", 
                   command=self.generate_files).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Upload to Simulator", 
+                  command=self.upload_files).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Save Data", 
                   command=self.save_data).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Load Data", 
@@ -438,6 +440,98 @@ class PMSIDataUI:
         }
         
         return template_vars
+    
+    def upload_files(self):
+        """Generate and upload XML files to PMSI simulator"""
+        data = self.get_form_data()
+        is_valid, error_msg = self.validate_data(data)
+        
+        if not is_valid:
+            messagebox.showerror("Validation Error", error_msg)
+            return
+        
+        try:
+            # Load template configuration
+            config_path = os.path.join("templates", "template_config.json")
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Generate RX number from form data or create one
+            rx_number = data.get("rx_number", "").strip()
+            if not rx_number:
+                rx_number = str(random.randint(1000000, 9999999))
+            
+            # Prepare template variables
+            template_vars = self.prepare_template_variables(data, rx_number, config)
+            
+            # Get PMSI type for folder path
+            pmsi_type = data.get("pmsi_type", "PDX EPS")
+            folder_path = "PDX" if "PDX" in pmsi_type else pmsi_type.replace(" ", "")
+            
+            # Generate and upload files
+            uploaded_files = []
+            for file_config in config["required_files"]:
+                template_path = os.path.join("templates", file_config["template"])
+                output_filename = file_config["output_pattern"].format(rx_number=rx_number)
+                
+                # Read template
+                with open(template_path, 'r') as f:
+                    template_content = f.read()
+                
+                # Replace tokens
+                for key, value in template_vars.items():
+                    template_content = template_content.replace(f"{{{{{key}}}}}", str(value))
+                
+                # Upload to simulator
+                file_path = f"{folder_path}/{output_filename}"
+                success = self.upload_file_to_simulator(file_path, template_content)
+                
+                if success:
+                    uploaded_files.append(file_path)
+                else:
+                    messagebox.showerror("Upload Error", f"Failed to upload {file_path}")
+                    return
+            
+            # Show success message
+            files_list = "\n".join(uploaded_files)
+            messagebox.showinfo("Success", f"Uploaded files to simulator:\n{files_list}\n\nRX Number: {rx_number}")
+            
+            # Update preview
+            preview = f"=== Files Uploaded to Simulator ===\n\nRX Number: {rx_number}\nPMSI Type: {pmsi_type}\nFolder: {folder_path}\n\nUploaded files:\n"
+            for filepath in uploaded_files:
+                preview += f"  - {filepath}\n"
+            preview += f"\nUploaded on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            
+            self.preview_text.delete(1.0, tk.END)
+            self.preview_text.insert(1.0, preview)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to upload files: {str(e)}")
+    
+    def upload_file_to_simulator(self, file_path: str, content: str) -> bool:
+        """Upload a single file to the PMSI simulator via API"""
+        try:
+            # Make API call
+            url = f"{self.api_base_url}/pms-manage"
+            params = {
+                "action": "write",
+                "file_path": file_path,
+                "content": content
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("status") == "success"
+            else:
+                return False
+                
+        except Exception as e:
+            print(f"Upload error for {file_path}: {e}")
+            return False
+    
+    def open_calendar(self, entry_widget):
         """Open a simple calendar popup for date selection"""
         cal_window = tk.Toplevel(self.root)
         cal_window.title("Select Date")
