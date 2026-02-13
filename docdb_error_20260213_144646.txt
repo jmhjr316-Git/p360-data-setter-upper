@@ -1,0 +1,49 @@
+DocumentDB Error Log - 2026-02-13 14:46:46.040901
+==================================================
+
+Error Type: ServerSelectionTimeoutError
+Error Message: p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1028) (configured timeouts: socketTimeoutMS: 10000.0ms, connectTimeoutMS: 10000.0ms), Timeout: 5.0s, Topology Description: <TopologyDescription id: 698f7fa047718bea71631e7b, topology_type: Unknown, servers: [<ServerDescription ('p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1028) (configured timeouts: socketTimeoutMS: 10000.0ms, connectTimeoutMS: 10000.0ms)')>]>
+
+Connection String: mongodb://docdb_admin:P360DocumentDockerCopy0507@p...
+
+Full Traceback:
+Traceback (most recent call last):
+  File "C:\Code\Data_setter_upper\pmsi_data_ui.py", line 738, in create_personalization_entry
+    client.admin.command('ping')
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\15558\AppData\Roaming\Python\Python313\site-packages\pymongo\_csot.py", line 125, in csot_wrapper
+    return func(self, *args, **kwargs)
+  File "C:\Users\15558\AppData\Roaming\Python\Python313\site-packages\pymongo\synchronous\database.py", line 934, in command
+    with self._client._conn_for_reads(read_preference, session, operation=command_name) as (
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\15558\AppData\Roaming\Python\Python313\site-packages\pymongo\synchronous\mongo_client.py", line 1885, in _conn_for_reads
+    server = self._select_server(read_preference, session, operation)
+  File "C:\Users\15558\AppData\Roaming\Python\Python313\site-packages\pymongo\synchronous\mongo_client.py", line 1833, in _select_server
+    server = topology.select_server(
+        server_selector,
+    ...<2 lines>...
+        operation_id=operation_id,
+    )
+  File "C:\Users\15558\AppData\Roaming\Python\Python313\site-packages\pymongo\synchronous\topology.py", line 428, in select_server
+    server = self._select_server(
+        selector,
+    ...<4 lines>...
+        operation_id=operation_id,
+    )
+  File "C:\Users\15558\AppData\Roaming\Python\Python313\site-packages\pymongo\synchronous\topology.py", line 402, in _select_server
+    servers = self.select_servers(
+        selector,
+    ...<4 lines>...
+        deprioritized_servers,
+    )
+  File "C:\Users\15558\AppData\Roaming\Python\Python313\site-packages\pymongo\synchronous\topology.py", line 298, in select_servers
+    server_descriptions = self._select_servers_loop(
+        selector,
+    ...<4 lines>...
+        deprioritized_servers=deprioritized_servers,
+    )
+  File "C:\Users\15558\AppData\Roaming\Python\Python313\site-packages\pymongo\synchronous\topology.py", line 359, in _select_servers_loop
+    raise ServerSelectionTimeoutError(
+        f"{self._error_message(selector)}, Timeout: {timeout}s, Topology Description: {self.description!r}"
+    )
+pymongo.errors.ServerSelectionTimeoutError: p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1028) (configured timeouts: socketTimeoutMS: 10000.0ms, connectTimeoutMS: 10000.0ms), Timeout: 5.0s, Topology Description: <TopologyDescription id: 698f7fa047718bea71631e7b, topology_type: Unknown, servers: [<ServerDescription ('p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1028) (configured timeouts: socketTimeoutMS: 10000.0ms, connectTimeoutMS: 10000.0ms)')>]>

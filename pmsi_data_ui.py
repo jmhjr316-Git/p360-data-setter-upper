@@ -19,14 +19,23 @@ try:
 except ImportError:
     HAS_CALENDAR = False
 
+try:
+    from pymongo import MongoClient
+    HAS_PYMONGO = True
+except ImportError:
+    HAS_PYMONGO = False
+
 class PMSIDataUI:
     def __init__(self, root):
         self.root = root
         self.root.title("PMSI Simulator Data Manager")
-        self.root.geometry("800x700")
+        self.root.geometry("1000x700")
         
         # API base URL - configurable
         self.api_base_url = "https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co"
+        
+        # DocumentDB connection string
+        self.docdb_connection_string = "mongodb://docdb_admin:P360DocumentDockerCopy0507@p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017/?ssl=true&retryWrites=false&loadBalanced=false&connectTimeoutMS=10000&authSource=admin&authMechanism=SCRAM-SHA-1"
         
         # Data fields configuration - easily expandable
         self.data_fields = {
@@ -34,6 +43,8 @@ class PMSIDataUI:
                 "pmsi_type": {"label": "PMSI Type", "type": "dropdown", 
                              "options": ["PDX EPS", "Liberty", "McKesson", "Epic", "AtebGen100", "PDX 275"], 
                              "required": True, "default": "PDX EPS"},
+                "enable_personalization": {"label": "Enable Personalization", "type": "checkbox", 
+                                          "required": False, "tooltip": "Check to create personalization entry in DocumentDB"},
             },
             "Patient Information": {
                 "patient_first_name": {"label": "Patient First Name", "type": "text", "required": True},
@@ -105,6 +116,10 @@ class PMSIDataUI:
                   command=self.save_data).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Load Data", 
                   command=self.load_data).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Load DocDB Entry", 
+                  command=self.load_docdb_entry).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Search DocDB", 
+                  command=self.search_docdb).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Clear All", 
                   command=self.clear_all).pack(side=tk.LEFT, padx=5)
         
@@ -145,7 +160,7 @@ class PMSIDataUI:
         if config.get("required", False):
             label_text += " *"
         
-        label = ttk.Label(field_frame, text=label_text, width=25)
+        label = ttk.Label(field_frame, text=label_text, width=20)
         label.pack(side=tk.LEFT, padx=(0, 10))
         
         # Input widget based on type
@@ -158,6 +173,9 @@ class PMSIDataUI:
             if field_name == "rx_status":
                 widget.bind("<<ComboboxSelected>>", self.on_status_change)
             widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        elif config["type"] == "checkbox":
+            widget = ttk.Checkbutton(field_frame)
+            widget.pack(side=tk.LEFT)
         elif config["type"] == "date":
             # Create frame for date entry and button
             date_frame = ttk.Frame(field_frame)
@@ -165,18 +183,18 @@ class PMSIDataUI:
             
             if HAS_CALENDAR:
                 # Use DateEntry if tkcalendar is available
-                widget = DateEntry(date_frame, width=12, background='darkblue',
+                widget = DateEntry(date_frame, width=15, background='darkblue',
                                  foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
-                widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                widget.pack(side=tk.LEFT, padx=(0, 5))
             else:
                 # Fallback to regular entry with calendar button
-                widget = ttk.Entry(date_frame)
-                widget.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+                widget = ttk.Entry(date_frame, width=15)
+                widget.pack(side=tk.LEFT, padx=(0, 5))
                 
                 # Add calendar button
                 cal_btn = ttk.Button(date_frame, text="📅", width=3,
                                    command=lambda: self.open_calendar(widget))
-                cal_btn.pack(side=tk.RIGHT)
+                cal_btn.pack(side=tk.LEFT)
         else:  # text, number
             widget = ttk.Entry(field_frame)
             widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -205,6 +223,9 @@ class PMSIDataUI:
         for field_name, widget in self.field_widgets.items():
             if isinstance(widget, ttk.Combobox):
                 data[field_name] = widget.get()
+            elif isinstance(widget, ttk.Checkbutton):
+                # Get checkbox state
+                data[field_name] = bool(widget.instate(['selected']))
             elif HAS_CALENDAR and hasattr(widget, 'get_date'):
                 # DateEntry widget
                 try:
@@ -333,6 +354,11 @@ class PMSIDataUI:
                     widget = self.field_widgets[field_name]
                     if isinstance(widget, ttk.Combobox):
                         widget.set(value)
+                    elif isinstance(widget, ttk.Checkbutton):
+                        if value:
+                            widget.state(['selected'])
+                        else:
+                            widget.state(['!selected'])
                     elif HAS_CALENDAR and hasattr(widget, 'set_date'):
                         # DateEntry widget
                         try:
@@ -355,6 +381,8 @@ class PMSIDataUI:
             for widget in self.field_widgets.values():
                 if isinstance(widget, ttk.Combobox):
                     widget.set("")
+                elif isinstance(widget, ttk.Checkbutton):
+                    widget.state(['!selected'])
                 elif HAS_CALENDAR and hasattr(widget, 'set_date'):
                     widget.set_date(date.today())
                 else:
@@ -567,7 +595,16 @@ class PMSIDataUI:
             
             # Show success message
             files_list = "\n".join(uploaded_files)
-            messagebox.showinfo("Success", f"Uploaded files to simulator:\n{files_list}\n\nRX Number: {rx_number}")
+            success_msg = f"Uploaded files to simulator:\n{files_list}\n\nRX Number: {rx_number}"
+            
+            # Handle personalization if enabled
+            if data.get("enable_personalization", False):
+                if self.create_personalization_entry(data, rx_number):
+                    success_msg += "\n\nPersonalization entry created in DocumentDB."
+                else:
+                    success_msg += "\n\nWarning: Failed to create personalization entry."
+            
+            messagebox.showinfo("Success", success_msg)
             
             # Update preview
             preview = f"=== Files Uploaded to Simulator ===\n\nRX Number: {rx_number}\nPMSI Type: {pmsi_type}\nFolder: {folder_path}\n\nUploaded files:\n"
@@ -686,6 +723,309 @@ class PMSIDataUI:
         except Exception as e:
             print(f"Upload error for {file_path}: {e}")
             return False
+    
+    def create_personalization_entry(self, data: Dict[str, Any], rx_number: str) -> bool:
+        """Create personalization entry in DocumentDB"""
+        if not HAS_PYMONGO:
+            messagebox.showerror("Missing Dependency", 
+                               "pymongo is required for personalization.\n\n" +
+                               "Install with: pip install pymongo")
+            return False
+        
+        try:
+            # Test connection first
+            print("Testing DocumentDB connection...")
+            client = MongoClient(self.docdb_connection_string, 
+                               serverSelectionTimeoutMS=5000,
+                               tlsAllowInvalidCertificates=True)
+            # Test the connection
+            client.admin.command('ping')
+            print("DocumentDB connection successful")
+            
+            db = client['p360_daily_docker']
+            collection = db['patient']
+            
+            # Generate patient ID if not provided
+            ateb_patient_id = random.randint(20000, 99999)
+            
+            # Convert dates to YYYYMMDD format
+            dob_formatted = data.get("patient_dob", "").replace("-", "")
+            fill_date_formatted = data.get("last_fill_date", "").replace("-", "")
+            expire_date_formatted = data.get("expiration_date", "").replace("-", "")
+            
+            # Create prescription object
+            prescription = {
+                "fillDate": fill_date_formatted,
+                "soldDate": fill_date_formatted,  # Using same as fill date
+                "expireDate": expire_date_formatted,
+                "originalRefillsAuth": 7.0,  # Default value
+                "medication": {
+                    "gpi": "34000003100340",  # Default GPI
+                    "medicationName": data.get("medication_name", "").upper(),
+                    "speakableMedName": data.get("medication_name", "").upper(),
+                    "ndc": "65162000850"  # Default NDC
+                },
+                "rxNum": rx_number,
+                "rxStatus": self.map_rx_status_to_docdb(data.get("rx_status", "Active")),
+                "daysSupply": 30.0,  # Default value
+                "refillsRemaining": 7.0,  # Default value
+                "dispensedQuantity": 30.0,  # Default value
+                "originalDispensedQuantity": 30.0,  # Default value
+                "autofillProgram": False,
+                "patientRxId": float(ateb_patient_id + 100),
+                "medicationName": data.get("medication_name", "").upper(),
+                "gpi": "34000003100340",
+                "ndc": "65162000850",
+                "prescriptionStoreNpi": str(random.randint(1000000000, 9999999999))
+            }
+            
+            # Check if patient already exists
+            existing_patient = collection.find_one({
+                "name.firstName": data.get("patient_first_name", ""),
+                "name.lastName": data.get("patient_last_name", ""),
+                "dateOfBirth": dob_formatted
+            })
+            
+            if existing_patient:
+                # Add prescription to existing patient
+                collection.update_one(
+                    {"_id": existing_patient["_id"]},
+                    {"$push": {"prescriptions": prescription}}
+                )
+                result_id = existing_patient["_id"]
+            else:
+                # Create new patient document
+                personalization_doc = {
+                    "atebPatientId": float(ateb_patient_id),
+                    "dateOfBirth": dob_formatted,
+                    "testCase": "pmsi ui generated",
+                    "prescriptions": [prescription],
+                    "clientId": float(data.get("client_id", "1537")),
+                    "storeId": float(data.get("store_id", "13387")),
+                    "storeNpi": data.get("pmsi_store_id", "1821516543"),
+                    "pharmacyPatientId": rx_number,  # Using RX number as patient ID
+                    "name": {
+                        "firstName": data.get("patient_first_name", ""),
+                        "lastName": data.get("patient_last_name", "")
+                    },
+                    "phone": {
+                        "primary": data.get("patient_phone", ""),
+                        "mobile": data.get("patient_phone", ""),
+                        "alternate": ""
+                    },
+                    "firstName": data.get("patient_first_name", ""),
+                    "lastName": data.get("patient_last_name", ""),
+                    "preferenceAttributes": []
+                }
+                
+                result = collection.insert_one(personalization_doc)
+                result_id = result.inserted_id
+            
+            client.close()
+            
+            # Save DocumentDB entry locally for reference
+            if result_id:
+                self.save_docdb_entry_locally(personalization_doc if not existing_patient else None, 
+                                             prescription, rx_number, existing_patient is not None)
+            
+            return result_id is not None
+            
+        except Exception as e:
+            # Log error to file
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            error_log = f"docdb_error_{timestamp}.txt"
+            
+            with open(error_log, 'w') as f:
+                f.write(f"DocumentDB Error Log - {datetime.now()}\n")
+                f.write("=" * 50 + "\n\n")
+                f.write(f"Error Type: {type(e).__name__}\n")
+                f.write(f"Error Message: {str(e)}\n\n")
+                f.write(f"Connection String: {self.docdb_connection_string[:50]}...\n\n")
+                
+                # Add traceback for more details
+                import traceback
+                f.write("Full Traceback:\n")
+                f.write(traceback.format_exc())
+            
+            error_msg = f"Failed to create personalization entry.\n\nError details saved to: {error_log}\n\nError: {str(e)}"
+            print(f"DocumentDB Error Details saved to: {error_log}")
+            messagebox.showerror("Database Error", error_msg)
+            return False
+    
+    def map_rx_status_to_docdb(self, rx_status: str) -> str:
+        """Map UI RX status to DocumentDB format"""
+        status_mapping = {
+            "Active": "ACTIVE",
+            "Inactive": "INACTIVE", 
+            "Pending": "PENDING",
+            "Expired": "EXPIRED",
+            "In Queue": "IN_QUEUE",
+            "Ready for Pickup": "READY",
+            "Picked Up": "SOLD",
+            "Shipped": "SHIPPED",
+            "Out of Refills": "NO_REFILLS"
+        }
+        return status_mapping.get(rx_status, "ACTIVE")
+    
+    def save_docdb_entry_locally(self, patient_doc: Dict, prescription: Dict, rx_number: str, is_existing_patient: bool):
+        """Save DocumentDB entry locally for reference"""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            if is_existing_patient:
+                # Save just the prescription that was added
+                filename = f"docdb_prescription_{rx_number}_{timestamp}.json"
+                local_doc = {
+                    "type": "prescription_added_to_existing_patient",
+                    "rx_number": rx_number,
+                    "prescription": prescription,
+                    "timestamp": timestamp
+                }
+            else:
+                # Save the full patient document
+                filename = f"docdb_patient_{rx_number}_{timestamp}.json"
+                local_doc = {
+                    "type": "new_patient_created",
+                    "patient_document": patient_doc,
+                    "timestamp": timestamp
+                }
+            
+            with open(filename, 'w') as f:
+                json.dump(local_doc, f, indent=2)
+            
+            print(f"DocumentDB entry saved locally: {filename}")
+            
+        except Exception as e:
+            print(f"Failed to save DocumentDB entry locally: {e}")
+    
+    def load_docdb_entry(self):
+        """Load and recreate DocumentDB entry from local file"""
+        from tkinter import filedialog
+        
+        filename = filedialog.askopenfilename(
+            title="Load DocumentDB Entry",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            with open(filename, 'r') as f:
+                docdb_data = json.load(f)
+            
+            if docdb_data.get("type") == "new_patient_created":
+                # Recreate patient document
+                if self.recreate_patient_in_docdb(docdb_data["patient_document"]):
+                    messagebox.showinfo("Success", f"Patient document recreated in DocumentDB from {filename}")
+                else:
+                    messagebox.showerror("Error", "Failed to recreate patient document")
+            
+            elif docdb_data.get("type") == "prescription_added_to_existing_patient":
+                messagebox.showinfo("Info", "This is a prescription-only entry. Use the full patient document to recreate.")
+            
+            else:
+                messagebox.showerror("Error", "Invalid DocumentDB entry format")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load DocumentDB entry: {str(e)}")
+    
+    def recreate_patient_in_docdb(self, patient_doc: Dict) -> bool:
+        """Recreate patient document in DocumentDB"""
+        if not HAS_PYMONGO:
+            messagebox.showerror("Missing Dependency", "pymongo is required")
+            return False
+        
+        try:
+            client = MongoClient(self.docdb_connection_string, tlsAllowInvalidCertificates=True)
+            db = client['p360_daily_docker']
+            collection = db['patient']
+            
+            # Insert the patient document
+            result = collection.insert_one(patient_doc)
+            client.close()
+            
+            return result.inserted_id is not None
+            
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to recreate patient: {str(e)}")
+            return False
+    
+    def search_docdb(self):
+        """Search for records in DocumentDB"""
+        if not HAS_PYMONGO:
+            messagebox.showerror("Missing Dependency", "pymongo is required")
+            return
+        
+        # Get search criteria from user
+        search_type = messagebox.askyesnocancel(
+            "Search DocumentDB",
+            "Search by:\n\nYes = RX Number\nNo = Patient Name\nCancel = Abort"
+        )
+        
+        if search_type is None:  # Cancel
+            return
+        
+        try:
+            client = MongoClient(self.docdb_connection_string, tlsAllowInvalidCertificates=True)
+            db = client['p360_daily_docker']
+            collection = db['patient']
+            
+            if search_type:  # Yes - RX Number
+                rx_num = tk.simpledialog.askstring("Search by RX Number", "Enter RX Number:")
+                if not rx_num:
+                    return
+                
+                # Search for patient with this RX number
+                patient = collection.find_one({"prescriptions.rxNum": rx_num})
+                
+                if patient:
+                    # Find the specific prescription
+                    prescription = next((p for p in patient['prescriptions'] if p['rxNum'] == rx_num), None)
+                    result = f"Found RX {rx_num}:\n\n"
+                    result += f"Patient: {patient['firstName']} {patient['lastName']}\n"
+                    result += f"DOB: {patient['dateOfBirth']}\n"
+                    result += f"Phone: {patient['phone']['primary']}\n\n"
+                    if prescription:
+                        result += f"Medication: {prescription['medication']['medicationName']}\n"
+                        result += f"Status: {prescription['rxStatus']}\n"
+                        result += f"Fill Date: {prescription['fillDate']}\n"
+                else:
+                    result = f"RX Number {rx_num} not found"
+                    
+            else:  # No - Patient Name
+                first_name = tk.simpledialog.askstring("Search by Name", "Enter First Name:")
+                if not first_name:
+                    return
+                last_name = tk.simpledialog.askstring("Search by Name", "Enter Last Name:")
+                if not last_name:
+                    return
+                
+                # Search for patient by name
+                patients = list(collection.find({
+                    "firstName": {"$regex": first_name, "$options": "i"},
+                    "lastName": {"$regex": last_name, "$options": "i"}
+                }))
+                
+                if patients:
+                    result = f"Found {len(patients)} patient(s):\n\n"
+                    for patient in patients[:5]:  # Limit to 5 results
+                        result += f"Patient: {patient['firstName']} {patient['lastName']}\n"
+                        result += f"DOB: {patient['dateOfBirth']}\n"
+                        result += f"RX Count: {len(patient.get('prescriptions', []))}\n"
+                        rx_numbers = [p['rxNum'] for p in patient.get('prescriptions', [])]
+                        result += f"RX Numbers: {', '.join(rx_numbers)}\n\n"
+                else:
+                    result = f"No patients found matching {first_name} {last_name}"
+            
+            client.close()
+            
+            # Show results in preview area
+            self.preview_text.delete(1.0, tk.END)
+            self.preview_text.insert(1.0, result)
+            
+        except Exception as e:
+            messagebox.showerror("Search Error", f"Failed to search DocumentDB: {str(e)}")
     
     def open_calendar(self, entry_widget):
         """Open a simple calendar popup for date selection"""

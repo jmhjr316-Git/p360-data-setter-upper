@@ -1,0 +1,49 @@
+{
+  "type": "new_patient_created",
+  "patient_document": {
+    "atebPatientId": 75898.0,
+    "dateOfBirth": "19781220",
+    "testCase": "pmsi ui generated",
+    "prescriptions": [
+      {
+        "fillDate": "20251231",
+        "soldDate": "20251231",
+        "expireDate": "20270213",
+        "originalRefillsAuth": 7.0,
+        "medication": {
+          "gpi": "34000003100340",
+          "medicationName": "ACTIVE MED FOR PZ",
+          "speakableMedName": "ACTIVE MED FOR PZ",
+          "ndc": "65162000850"
+        },
+        "rxNum": "2827900",
+        "rxStatus": "ACTIVE",
+        "daysSupply": 30.0,
+        "refillsRemaining": 7.0,
+        "dispensedQuantity": 30.0,
+        "originalDispensedQuantity": 30.0,
+        "autofillProgram": false,
+        "patientRxId": 75998.0,
+        "medicationName": "ACTIVE MED FOR PZ",
+        "gpi": "34000003100340",
+        "ndc": "65162000850",
+        "prescriptionStoreNpi": "2733549488"
+      }
+    ],
+    "clientId": 9001.0,
+    "storeId": 9001.0,
+    "storeNpi": "70050001",
+    "pharmacyPatientId": "2827900",
+    "name": {
+      "firstName": "pz jim",
+      "lastName": "pz jim last"
+    },
+    "phone": {
+      "primary": "7249143802",
+      "mobile": "7249143802",
+      "alternate": ""
+    },
+    "firstName": "pz jim",
+    "lastName": "pz jim last",
+    "preferenceAttributes": [],
+    "_id": 
