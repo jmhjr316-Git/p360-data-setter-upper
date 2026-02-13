@@ -99,6 +99,8 @@ class PMSIDataUI:
                   command=self.generate_files).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Upload to Simulator", 
                   command=self.upload_files).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="Check RX Exists", 
+                  command=self.check_rx_number).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Save Data", 
                   command=self.save_data).pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons_frame, text="Load Data", 
@@ -461,12 +463,30 @@ class PMSIDataUI:
             if not rx_number:
                 rx_number = str(random.randint(1000000, 9999999))
             
+            # Check if RX number already exists
+            pmsi_type = data.get("pmsi_type", "PDX EPS")
+            folder_path = "PDX" if "PDX" in pmsi_type else pmsi_type.replace(" ", "")
+            
+            if self.check_rx_exists(folder_path, rx_number):
+                response = messagebox.askyesnocancel(
+                    "RX Number Exists", 
+                    f"RX Number {rx_number} already exists in {folder_path}.\n\n" +
+                    "Yes = Overwrite existing files\n" +
+                    "No = Generate new RX number\n" +
+                    "Cancel = Abort upload"
+                )
+                
+                if response is None:  # Cancel
+                    return
+                elif response is False:  # No - generate new number
+                    rx_number = str(random.randint(1000000, 9999999))
+                    messagebox.showinfo("New RX Number", f"Generated new RX Number: {rx_number}")
+                # If Yes (True), continue with existing number to overwrite
+            
             # Prepare template variables
             template_vars = self.prepare_template_variables(data, rx_number, config)
             
             # Get PMSI type for folder path
-            pmsi_type = data.get("pmsi_type", "PDX EPS")
-            folder_path = "PDX" if "PDX" in pmsi_type else pmsi_type.replace(" ", "")
             
             # Generate and upload files
             uploaded_files = []
@@ -507,6 +527,34 @@ class PMSIDataUI:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to upload files: {str(e)}")
+    
+    def check_rx_exists(self, folder_path: str, rx_number: str) -> bool:
+        """Check if RX number already exists in the simulator"""
+        try:
+            test_filename = f"RxResponse{rx_number}.xml"
+            file_path = f"{folder_path}/{test_filename}"
+            url = f"{self.api_base_url}/files/{file_path}"
+            response = requests.get(url, timeout=5)
+            return response.status_code == 200
+        except Exception:
+            return False
+    
+    def check_rx_number(self):
+        """Check if the current RX number exists in the simulator"""
+        data = self.get_form_data()
+        rx_number = data.get("rx_number", "").strip()
+        
+        if not rx_number:
+            messagebox.showwarning("No RX Number", "Please enter an RX Number to check.")
+            return
+        
+        pmsi_type = data.get("pmsi_type", "PDX EPS")
+        folder_path = "PDX" if "PDX" in pmsi_type else pmsi_type.replace(" ", "")
+        
+        if self.check_rx_exists(folder_path, rx_number):
+            messagebox.showwarning("RX Exists", f"RX Number {rx_number} already exists in {folder_path} folder.")
+        else:
+            messagebox.showinfo("RX Available", f"RX Number {rx_number} is available in {folder_path} folder.")
     
     def upload_file_to_simulator(self, file_path: str, content: str) -> bool:
         """Upload a single file to the PMSI simulator via API"""
