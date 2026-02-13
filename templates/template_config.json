@@ -35,6 +35,51 @@
       "refills_remaining": "5",
       "remaining_quantity": "100.0",
       "date_logic": "past_expiration"
+    },
+    "In Queue": {
+      "refillable": "Y",
+      "prescription_status": "A",
+      "rx_status_code": "204",
+      "rx_status_description": "204 = In Queue",
+      "refills_remaining": "5",
+      "remaining_quantity": "100.0",
+      "date_logic": "recent_fill"
+    },
+    "Ready for Pickup": {
+      "refillable": "Y",
+      "prescription_status": "A",
+      "rx_status_code": "206",
+      "rx_status_description": "206 = Ready for Pickup",
+      "refills_remaining": "4",
+      "remaining_quantity": "89.0",
+      "date_logic": "within_5_days"
+    },
+    "Picked Up": {
+      "refillable": "Y",
+      "prescription_status": "A",
+      "rx_status_code": "207",
+      "rx_status_description": "207 = Picked up",
+      "refills_remaining": "4",
+      "remaining_quantity": "89.0",
+      "date_logic": "recent_pickup"
+    },
+    "Shipped": {
+      "refillable": "Y",
+      "prescription_status": "A",
+      "rx_status_code": "208",
+      "rx_status_description": "208 = Shipped",
+      "refills_remaining": "4",
+      "remaining_quantity": "89.0",
+      "date_logic": "recent_ship"
+    },
+    "Out of Refills": {
+      "refillable": "N",
+      "prescription_status": "A",
+      "rx_status_code": "207",
+      "rx_status_description": "207 = Picked up",
+      "refills_remaining": "0",
+      "remaining_quantity": "0.0",
+      "date_logic": "out_of_refills"
     }
   },
   "required_files": [
@@ -63,7 +108,7 @@
     "medication_name": "From form data",
     "strength": "From form data",
     "units": "From form data",
-    "last_fill_date": "From form data",
+    "last_fill_date": "From form data or calculated based on date_logic",
     "expiration_date": "From form data or calculated based on date_logic",
     "copay": "From form data",
     "refillable": "Based on rx_status mapping",

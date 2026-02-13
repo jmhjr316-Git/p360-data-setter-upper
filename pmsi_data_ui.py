@@ -43,7 +43,7 @@ class PMSIDataUI:
             },
             "Prescription Information": {
                 "rx_number": {"label": "RX Number", "type": "text", "required": False, "tooltip": "Leave blank to auto-generate a random 7-digit number"},
-                "rx_status": {"label": "RX Status", "type": "dropdown", "options": ["Active", "Inactive", "Pending", "Expired"], "required": True},
+                "rx_status": {"label": "RX Status", "type": "dropdown", "options": ["Active", "Inactive", "Pending", "Expired", "In Queue", "Ready for Pickup", "Picked Up", "Shipped", "Out of Refills"], "required": True},
                 "medication_name": {"label": "Medication Name", "type": "text", "required": True},
                 "strength": {"label": "Strength", "type": "text", "required": True},
                 "units": {"label": "Units", "type": "text", "required": True},
@@ -154,6 +154,9 @@ class PMSIDataUI:
             # Set default value if specified
             if config.get("default"):
                 widget.set(config["default"])
+            # Add status change handler for rx_status
+            if field_name == "rx_status":
+                widget.bind("<<ComboboxSelected>>", self.on_status_change)
             widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
         elif config["type"] == "date":
             # Create frame for date entry and button
@@ -453,6 +456,25 @@ class PMSIDataUI:
             # Set expiration date to future for active scenarios
             future_date = current_dt + timedelta(days=365)
             template_vars["expiration_date"] = future_date.strftime("%Y-%m-%d")
+        elif date_logic == "within_5_days":
+            # Set last fill date within last 5 days for Ready for Pickup
+            fill_date = current_dt - timedelta(days=2)
+            template_vars["last_fill_date"] = fill_date.strftime("%Y-%m-%d")
+        elif date_logic == "recent_pickup":
+            # Set last fill date to yesterday for Picked Up
+            fill_date = current_dt - timedelta(days=1)
+            template_vars["last_fill_date"] = fill_date.strftime("%Y-%m-%d")
+        elif date_logic == "recent_ship":
+            # Set last fill date to 3 days ago for Shipped
+            fill_date = current_dt - timedelta(days=3)
+            template_vars["last_fill_date"] = fill_date.strftime("%Y-%m-%d")
+        elif date_logic == "recent_fill":
+            # Set last fill date to today for In Queue
+            template_vars["last_fill_date"] = current_dt.strftime("%Y-%m-%d")
+        elif date_logic == "out_of_refills":
+            # Set last fill date to 1 week ago for Out of Refills
+            fill_date = current_dt - timedelta(days=7)
+            template_vars["last_fill_date"] = fill_date.strftime("%Y-%m-%d")
         # else use form data as-is
         
         return template_vars
@@ -541,6 +563,52 @@ class PMSIDataUI:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to upload files: {str(e)}")
+    
+    def on_status_change(self, event=None):
+        """Handle RX status change and auto-populate related fields"""
+        rx_status = self.field_widgets["rx_status"].get()
+        current_dt = datetime.now()
+        
+        # Auto-populate dates based on status
+        if rx_status == "Active":
+            # Set expiration date to future
+            future_date = current_dt + timedelta(days=365)
+            self.set_date_field("expiration_date", future_date)
+        elif rx_status == "Expired":
+            # Set expiration date to past
+            past_date = current_dt - timedelta(days=30)
+            self.set_date_field("expiration_date", past_date)
+        elif rx_status == "Ready for Pickup":
+            # Set last fill date to 2 days ago (within 5 days)
+            fill_date = current_dt - timedelta(days=2)
+            self.set_date_field("last_fill_date", fill_date)
+        elif rx_status == "Picked Up":
+            # Set last fill date to 1 day ago
+            fill_date = current_dt - timedelta(days=1)
+            self.set_date_field("last_fill_date", fill_date)
+        elif rx_status == "Shipped":
+            # Set last fill date to 3 days ago
+            fill_date = current_dt - timedelta(days=3)
+            self.set_date_field("last_fill_date", fill_date)
+        elif rx_status == "In Queue":
+            # Set last fill date to today (just filled)
+            self.set_date_field("last_fill_date", current_dt)
+        elif rx_status == "Out of Refills":
+            # Set last fill date to 1 week ago
+            fill_date = current_dt - timedelta(days=7)
+            self.set_date_field("last_fill_date", fill_date)
+    
+    def set_date_field(self, field_name: str, date_value: datetime):
+        """Set a date field value"""
+        if field_name in self.field_widgets:
+            widget = self.field_widgets[field_name]
+            date_str = date_value.strftime('%Y-%m-%d')
+            
+            if HAS_CALENDAR and hasattr(widget, 'set_date'):
+                widget.set_date(date_value.date())
+            else:
+                widget.delete(0, tk.END)
+                widget.insert(0, date_str)
     
     def check_rx_exists(self, folder_path: str, rx_number: str) -> bool:
         """Check if RX number already exists in the simulator"""
