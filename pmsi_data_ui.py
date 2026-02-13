@@ -253,6 +253,14 @@ class PMSIDataUI:
             messagebox.showerror("Validation Error", error_msg)
             return
         
+        # Generate RX number if blank
+        rx_number = data.get("rx_number", "").strip()
+        if not rx_number:
+            rx_number = str(random.randint(1000000, 9999999))
+            self.field_widgets["rx_number"].delete(0, tk.END)
+            self.field_widgets["rx_number"].insert(0, rx_number)
+            data["rx_number"] = rx_number
+        
         # Format data for preview
         preview = "=== PMSI Simulator Data ===\n\n"
         for section_name, fields in self.data_fields.items():
@@ -368,10 +376,13 @@ class PMSIDataUI:
             with open(config_path, 'r') as f:
                 config = json.load(f)
             
-            # Generate RX number from form data or create one
+            # Get RX number from form data or create one
             rx_number = data.get("rx_number", "").strip()
             if not rx_number:
                 rx_number = str(random.randint(1000000, 9999999))
+                # Update the form field with the generated number
+                self.field_widgets["rx_number"].delete(0, tk.END)
+                self.field_widgets["rx_number"].insert(0, rx_number)
             
             # Prepare template variables
             template_vars = self.prepare_template_variables(data, rx_number, config)
@@ -494,10 +505,13 @@ class PMSIDataUI:
             with open(config_path, 'r') as f:
                 config = json.load(f)
             
-            # Generate RX number from form data or create one
+            # Get RX number from form data or create one
             rx_number = data.get("rx_number", "").strip()
             if not rx_number:
                 rx_number = str(random.randint(1000000, 9999999))
+                # Update the form field with the generated number
+                self.field_widgets["rx_number"].delete(0, tk.END)
+                self.field_widgets["rx_number"].insert(0, rx_number)
             
             # Check if RX number already exists
             pmsi_type = data.get("pmsi_type", "PDX EPS")
@@ -516,6 +530,9 @@ class PMSIDataUI:
                     return
                 elif response is False:  # No - generate new number
                     rx_number = str(random.randint(1000000, 9999999))
+                    # Update the form field with the new generated number
+                    self.field_widgets["rx_number"].delete(0, tk.END)
+                    self.field_widgets["rx_number"].insert(0, rx_number)
                     messagebox.showinfo("New RX Number", f"Generated new RX Number: {rx_number}")
                 # If Yes (True), continue with existing number to overwrite
             
@@ -652,8 +669,17 @@ class PMSIDataUI:
             response = requests.get(url, params=params, timeout=10)
             
             if response.status_code == 200:
-                result = response.json()
-                return result.get("status") == "success"
+                try:
+                    result = response.json()
+                    return result.get("status") == "success"
+                except:
+                    # Check if response contains service unavailable message
+                    if "Connection refused" in response.text or "127.0.0.1:8081" in response.text:
+                        messagebox.showerror("Service Unavailable", 
+                                           "PMSI Simulator service is currently unavailable.\n\n" +
+                                           "Please contact the development team to restart the service,\n" +
+                                           "or use 'Generate Files' to create files locally.")
+                    return False
             else:
                 return False
                 
