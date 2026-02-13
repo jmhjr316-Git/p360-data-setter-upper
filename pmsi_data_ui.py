@@ -42,7 +42,7 @@ class PMSIDataUI:
                 "patient_phone": {"label": "Patient Phone", "type": "text", "required": True},
             },
             "Prescription Information": {
-                "rx_number": {"label": "RX Number", "type": "text", "required": True},
+                "rx_number": {"label": "RX Number", "type": "text", "required": False, "tooltip": "Leave blank to auto-generate a random 7-digit number"},
                 "rx_status": {"label": "RX Status", "type": "dropdown", "options": ["Active", "Inactive", "Pending", "Expired"], "required": True},
                 "medication_name": {"label": "Medication Name", "type": "text", "required": True},
                 "strength": {"label": "Strength", "type": "text", "required": True},
@@ -173,6 +173,22 @@ class PMSIDataUI:
         else:  # text, number
             widget = ttk.Entry(field_frame)
             widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Add tooltip if specified
+        if config.get("tooltip"):
+            def show_tooltip(event):
+                tooltip = tk.Toplevel()
+                tooltip.wm_overrideredirect(True)
+                tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
+                ttk.Label(tooltip, text=config["tooltip"], background="lightyellow", 
+                         relief="solid", borderwidth=1, font=("Arial", 8)).pack()
+                tooltip.after(3000, tooltip.destroy)
+            
+            def hide_tooltip(event):
+                pass
+            
+            widget.bind("<Enter>", show_tooltip)
+            widget.bind("<Leave>", hide_tooltip)
         
         self.field_widgets[field_name] = widget
     
