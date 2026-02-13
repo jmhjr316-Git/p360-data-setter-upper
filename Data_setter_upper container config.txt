@@ -1,0 +1,184 @@
+# PMS Simulator File Management API
+
+## Setup Instructions
+
+### 1. Setup on pmssim container:
+
+bash
+# Create symlink for file reads (from pmssim container):
+rm -rf /pms-simulator/apache-tomcat-7.0.69/webapps/files
+ln -s /pms-simulator/apache-tomcat-7.0.69/webapps/FsiXmlSimulator/WEB-INF/rsp /pms-simulator/apache-tomcat-7.0.69/webapps/files
+
+# Create file management JSP (from pmssim container):
+cat > /pms-simulator/apache-tomcat-7.0.69/webapps/FsiXmlSimulator/manage.jsp << 'EOF'
+<%@ page import="java.io.*,java.nio.file.*" %>
+<%
+String action = request.getParameter("action");
+String filePath = request.getParameter("file_path");
+String content = request.getParameter("content");
+String basePath = "/pms-simulator/apache-tomcat-7.0.69/webapps/FsiXmlSimulator/WEB-INF/rsp";
+
+response.setContentType("application/json");
+
+try {
+    File fullPath = new File(basePath, filePath);
+
+    if ("write".equals(action)) {
+        fullPath.getParentFile().mkdirs();
+        FileWriter writer = new FileWriter(fullPath);
+        writer.write(content);
+        writer.close();
+        out.println("{\"status\":\"success\",\"message\":\"File written\"}");
+    } else if ("delete".equals(action)) {
+        fullPath.delete();
+        out.println("{\"status\":\"success\",\"message\":\"File deleted\"}");
+    } else if ("list".equals(action)) {
+        if (fullPath.isDirectory()) {
+            File[] files = fullPath.listFiles();
+            out.print("{\"status\":\"success\",\"files\":[");
+            for (int i = 0; i < files.length; i++) {
+                out.print("\"" + files[i].getName() + "\"");
+                if (i < files.length - 1) out.print(",");
+            }
+            out.println("]}");
+        } else {
+            out.println("{\"error\":\"Not a directory\"}");
+        }
+    }
+} catch (Exception e) {
+    response.setStatus(500);
+    out.println("{\"error\":\"" + e.getMessage() + "\"}");
+}
+%>
+EOF
+
+
+### 2. Setup on ivr-mock-svcs container:
+
+bash
+# Create proxy script (from ivr-mock-svcs container):
+cat > /tmp/pms_proxy.sh << 'EOF'
+#!/bin/bash
+ACTION="$1"
+FILE_PATH="$2"
+CONTENT="$3"
+
+curl -s -X POST "http://pmssim:8181/FsiXmlSimulator/manage.jsp" \
+  -d "action=${ACTION}&file_path=${FILE_PATH}&content=${CONTENT}"
+EOF
+
+chmod +x /tmp/pms_proxy.sh
+
+# Create Python proxy server (from ivr-mock-svcs container):
+cat > /tmp/simple_proxy.py << 'EOF'
+#!/usr/bin/env python3
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import subprocess, urllib.parse
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+
+        action = params.get('action', [''])[0]
+        file_path = params.get('file_path', [''])[0]
+        content = params.get('content', [''])[0]
+
+        try:
+            result = subprocess.run(['/tmp/pms_proxy.sh', action, file_path, content],
+                                  capture_output=True, text=True)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(result.stdout.encode())
+        except Exception as e:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(f'{{"error": "{str(e)}"}}'.encode())
+
+HTTPServer(('127.0.0.1', 8081), SimpleHandler).serve_forever()
+EOF
+
+# Start the proxy server:
+python3 /tmp/simple_proxy.py &
+
+# Configure WireMock mappings:
+curl -X POST http://localhost:8080/__admin/mappings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request": {
+      "method": "GET",
+      "urlPathPattern": "/files/.*"
+    },
+    "response": {
+      "proxyBaseUrl": "http://pmssim:8181"
+    }
+  }'
+
+curl -X POST http://localhost:8080/__admin/mappings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request": {
+      "method": "GET",
+      "urlPathPattern": "/pms-manage.*"
+    },
+    "response": {
+      "proxyBaseUrl": "http://127.0.0.1:8081"
+    }
+  }'
+
+
+## Usage Examples
+
+### Read Files:
+bash
+# Read any file
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/files/PDX/RefillResponse1001000.xml'
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/files/NYC/test.xml'
+
+
+### List Files:
+bash
+# List files in PDX folder
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=list&file_path=PDX'
+
+# List files in root directory
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=list&file_path='
+
+# List files in any subfolder
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=list&file_path=NYC/subfolder'
+
+
+### Write/Update Files:
+bash
+# Write to PDX folder
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=write&file_path=PDX/test.xml&content=<xml>test content</xml>'
+
+# Write to any folder (creates folders automatically)
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=write&file_path=NYC/response.xml&content=<xml>NYC content</xml>'
+
+# Update existing files (same command)
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=write&file_path=PDX/RefillResponse1001000.xml&content=<xml>updated</xml>'
+
+
+### Delete Files:
+bash
+# Delete any file
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=delete&file_path=PDX/test.xml'
+curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=delete&file_path=NYC/response.xml'
+
+
+## Deployment Notes
+
+### For pmssim container:
+• Add the symlink and JSP creation to the container startup script
+• Ensure the JSP file persists across deployments
+
+### For ivr-mock-svcs container:
+• Add the proxy script and Python server to the container startup script
+• Add the WireMock mapping configuration to the startup process
+• Ensure python3 is available in the container
+
+### Container Startup Integration:
+Add these commands to your container initialization scripts to ensure persistence across deployments.
