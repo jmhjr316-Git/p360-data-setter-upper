@@ -7,10 +7,15 @@ A cross-platform GUI for managing PMSI simulator files and data.
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import json
-from datetime import datetime
+from datetime import datetime, date
 from typing import Dict, Any
 import requests
 from urllib.parse import urlencode
+try:
+    from tkcalendar import DateEntry
+    HAS_CALENDAR = True
+except ImportError:
+    HAS_CALENDAR = False
 
 class PMSIDataUI:
     def __init__(self, root):
@@ -132,12 +137,30 @@ class PMSIDataUI:
         # Input widget based on type
         if config["type"] == "dropdown":
             widget = ttk.Combobox(field_frame, values=config["options"], state="readonly")
-        elif config["type"] == "number":
+            widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        elif config["type"] == "date":
+            # Create frame for date entry and button
+            date_frame = ttk.Frame(field_frame)
+            date_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            
+            if HAS_CALENDAR:
+                # Use DateEntry if tkcalendar is available
+                widget = DateEntry(date_frame, width=12, background='darkblue',
+                                 foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd')
+                widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            else:
+                # Fallback to regular entry with calendar button
+                widget = ttk.Entry(date_frame)
+                widget.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+                
+                # Add calendar button
+                cal_btn = ttk.Button(date_frame, text="📅", width=3,
+                                   command=lambda: self.open_calendar(widget))
+                cal_btn.pack(side=tk.RIGHT)
+        else:  # text, number
             widget = ttk.Entry(field_frame)
-        else:  # text, date
-            widget = ttk.Entry(field_frame)
+            widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.field_widgets[field_name] = widget
     
     def get_form_data(self) -> Dict[str, Any]:
@@ -146,6 +169,13 @@ class PMSIDataUI:
         for field_name, widget in self.field_widgets.items():
             if isinstance(widget, ttk.Combobox):
                 data[field_name] = widget.get()
+            elif HAS_CALENDAR and hasattr(widget, 'get_date'):
+                # DateEntry widget
+                try:
+                    date_val = widget.get_date()
+                    data[field_name] = date_val.strftime('%Y-%m-%d') if date_val else ''
+                except:
+                    data[field_name] = widget.get().strip()
             else:
                 data[field_name] = widget.get().strip()
         return data
@@ -240,6 +270,14 @@ class PMSIDataUI:
                     widget = self.field_widgets[field_name]
                     if isinstance(widget, ttk.Combobox):
                         widget.set(value)
+                    elif HAS_CALENDAR and hasattr(widget, 'set_date'):
+                        # DateEntry widget
+                        try:
+                            if value:
+                                date_obj = datetime.strptime(value, '%Y-%m-%d').date()
+                                widget.set_date(date_obj)
+                        except:
+                            pass
                     else:
                         widget.delete(0, tk.END)
                         widget.insert(0, str(value))
@@ -254,9 +292,77 @@ class PMSIDataUI:
             for widget in self.field_widgets.values():
                 if isinstance(widget, ttk.Combobox):
                     widget.set("")
+                elif HAS_CALENDAR and hasattr(widget, 'set_date'):
+                    widget.set_date(date.today())
                 else:
                     widget.delete(0, tk.END)
             self.preview_text.delete(1.0, tk.END)
+    
+    def open_calendar(self, entry_widget):
+        """Open a simple calendar popup for date selection"""
+        cal_window = tk.Toplevel(self.root)
+        cal_window.title("Select Date")
+        cal_window.geometry("300x250")
+        cal_window.resizable(False, False)
+        
+        # Center the window
+        cal_window.transient(self.root)
+        cal_window.grab_set()
+        
+        # Simple date selection
+        today = date.today()
+        
+        # Year selection
+        year_frame = ttk.Frame(cal_window)
+        year_frame.pack(pady=10)
+        ttk.Label(year_frame, text="Year:").pack(side=tk.LEFT)
+        year_var = tk.StringVar(value=str(today.year))
+        year_spin = ttk.Spinbox(year_frame, from_=1900, to=2100, textvariable=year_var, width=10)
+        year_spin.pack(side=tk.LEFT, padx=5)
+        
+        # Month selection
+        month_frame = ttk.Frame(cal_window)
+        month_frame.pack(pady=5)
+        ttk.Label(month_frame, text="Month:").pack(side=tk.LEFT)
+        months = ['January', 'February', 'March', 'April', 'May', 'June',
+                 'July', 'August', 'September', 'October', 'November', 'December']
+        month_var = tk.StringVar(value=months[today.month-1])
+        month_combo = ttk.Combobox(month_frame, values=months, textvariable=month_var, state="readonly", width=12)
+        month_combo.pack(side=tk.LEFT, padx=5)
+        
+        # Day selection
+        day_frame = ttk.Frame(cal_window)
+        day_frame.pack(pady=5)
+        ttk.Label(day_frame, text="Day:").pack(side=tk.LEFT)
+        day_var = tk.StringVar(value=str(today.day))
+        day_spin = ttk.Spinbox(day_frame, from_=1, to=31, textvariable=day_var, width=10)
+        day_spin.pack(side=tk.LEFT, padx=5)
+        
+        # Buttons
+        btn_frame = ttk.Frame(cal_window)
+        btn_frame.pack(pady=20)
+        
+        def set_date():
+            try:
+                year = int(year_var.get())
+                month = months.index(month_var.get()) + 1
+                day = int(day_var.get())
+                selected_date = date(year, month, day)
+                entry_widget.delete(0, tk.END)
+                entry_widget.insert(0, selected_date.strftime('%Y-%m-%d'))
+                cal_window.destroy()
+            except ValueError:
+                messagebox.showerror("Invalid Date", "Please select a valid date.")
+        
+        def set_today():
+            today = date.today()
+            entry_widget.delete(0, tk.END)
+            entry_widget.insert(0, today.strftime('%Y-%m-%d'))
+            cal_window.destroy()
+        
+        ttk.Button(btn_frame, text="Set Date", command=set_date).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Today", command=set_today).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=cal_window.destroy).pack(side=tk.LEFT, padx=5)
     
     def test_api_connection(self):
         """Test connection to PMSI API"""
