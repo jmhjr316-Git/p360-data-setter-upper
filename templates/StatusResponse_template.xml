@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rxStatusResponse version="1.0.18.4">
+    <control>
+        <source>ivr</source>
+        <destination>eps</destination>
+        <storeNumberType>nhin</storeNumberType>
+        <storeNumber>{{pmsi_store_id}}</storeNumber>
+        <softwareVersnum>2607</softwareVersnum>
+        <transactionControlReference>9ebecdfc</transactionControlReference>
+        <dateTimeOfInitiation>{{current_datetime}}</dateTimeOfInitiation>
+        <classOfServiceKey>LEVEL 1</classOfServiceKey>
+    </control>
+    <msgStatus>
+        <msgStatusCode>000</msgStatusCode>
+    </msgStatus>
+    <rxStatusGroup>
+        <rxStatusItem>
+            <number>{{rx_number}}</number>
+            <rxStatusCode>{{rx_status_code}}</rxStatusCode>
+            <rxStatusDescription>{{rx_status_description}}</rxStatusDescription>
+            <promiseDateTime>{{last_fill_date}}T00:32:17.289</promiseDateTime>
+            <deliveredDaysAgo>10</deliveredDaysAgo>
+            <shipperName>FEDEX</shipperName>
+            <shipperTrackingNumber>TRACKINGNUMBER</shipperTrackingNumber>
+            <shipDateTime>{{last_fill_date}}T00:32:17.289</shipDateTime>
+            <orderNumber>ORDERNUMBER</orderNumber>
+        </rxStatusItem>
+    </rxStatusGroup>
+</rxStatusResponse>

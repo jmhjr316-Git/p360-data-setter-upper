@@ -40,4 +40,4 @@ pmsi_*.json
 *.log
 
 # Generated files
-*Response*.xml
+*Response[0-9]*.xml

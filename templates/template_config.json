@@ -4,25 +4,37 @@
       "refillable": "Y",
       "prescription_status": "A",
       "rx_status_code": "000",
-      "rx_status_description": "000 = Rx Accepted"
+      "rx_status_description": "000 = Rx Accepted",
+      "refills_remaining": "5",
+      "remaining_quantity": "100.0",
+      "date_logic": "future_expiration"
     },
     "Inactive": {
       "refillable": "N",
       "prescription_status": "I",
-      "rx_status_code": "100",
-      "rx_status_description": "100 = Rx Inactive"
+      "rx_status_code": "509",
+      "rx_status_description": "509 = Not Found",
+      "refills_remaining": "0",
+      "remaining_quantity": "0.0",
+      "date_logic": "past_expiration"
     },
     "Pending": {
       "refillable": "N",
       "prescription_status": "P",
-      "rx_status_code": "050",
-      "rx_status_description": "050 = Rx Pending"
+      "rx_status_code": "200",
+      "rx_status_description": "200 = Waiting for Prescriber",
+      "refills_remaining": "5",
+      "remaining_quantity": "100.0",
+      "date_logic": "future_expiration"
     },
     "Expired": {
       "refillable": "Y",
-      "prescription_status": "E",
+      "prescription_status": "A",
       "rx_status_code": "207",
-      "rx_status_description": "207 = Picked up"
+      "rx_status_description": "207 = Picked up",
+      "refills_remaining": "5",
+      "remaining_quantity": "100.0",
+      "date_logic": "past_expiration"
     }
   },
   "required_files": [
@@ -40,7 +52,7 @@
     }
   ],
   "dynamic_fields": {
-    "rx_number": "Generated 7-digit number",
+    "rx_number": "Generated 7-digit number or user input",
     "current_datetime": "Current timestamp in ISO format",
     "promise_datetime": "Current date + 2 days",
     "pmsi_store_id": "From form data",
@@ -52,11 +64,13 @@
     "strength": "From form data",
     "units": "From form data",
     "last_fill_date": "From form data",
-    "expiration_date": "From form data",
+    "expiration_date": "From form data or calculated based on date_logic",
     "copay": "From form data",
     "refillable": "Based on rx_status mapping",
     "prescription_status": "Based on rx_status mapping",
     "rx_status_code": "Based on rx_status mapping",
-    "rx_status_description": "Based on rx_status mapping"
+    "rx_status_description": "Based on rx_status mapping",
+    "refills_remaining": "Based on rx_status mapping",
+    "remaining_quantity": "Based on rx_status mapping"
   }
 }

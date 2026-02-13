@@ -438,8 +438,22 @@ class PMSIDataUI:
             "refillable": status_mapping["refillable"],
             "prescription_status": status_mapping["prescription_status"],
             "rx_status_code": status_mapping["rx_status_code"],
-            "rx_status_description": status_mapping["rx_status_description"]
+            "rx_status_description": status_mapping["rx_status_description"],
+            "refills_remaining": status_mapping["refills_remaining"],
+            "remaining_quantity": status_mapping["remaining_quantity"]
         }
+        
+        # Handle date logic based on scenario
+        date_logic = status_mapping.get("date_logic", "use_form_data")
+        if date_logic == "past_expiration":
+            # Set expiration date to past for expired scenarios
+            past_date = current_dt - timedelta(days=30)
+            template_vars["expiration_date"] = past_date.strftime("%Y-%m-%d")
+        elif date_logic == "future_expiration":
+            # Set expiration date to future for active scenarios
+            future_date = current_dt + timedelta(days=365)
+            template_vars["expiration_date"] = future_date.strftime("%Y-%m-%d")
+        # else use form data as-is
         
         return template_vars
     
