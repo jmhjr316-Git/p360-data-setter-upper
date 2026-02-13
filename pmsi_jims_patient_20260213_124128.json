@@ -1,0 +1,16 @@
+{
+  "patient_first_name": "jim",
+  "patient_last_name": "horvath",
+  "patient_dob": "1978-12-20",
+  "patient_phone": "7244702052",
+  "rx_status": "Expired",
+  "medication_name": "med to fill",
+  "strength": "10",
+  "units": "ml",
+  "last_fill_date": "2026-02-01",
+  "expiration_date": "2025-02-01",
+  "copay": "25.36",
+  "client_id": "9001",
+  "store_id": "9001",
+  "pmsi_store_id": "70005001"
+}

@@ -5,7 +5,7 @@ A cross-platform GUI for managing PMSI simulator files and data.
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, simpledialog
 import json
 from datetime import datetime, date
 from typing import Dict, Any
@@ -232,7 +232,7 @@ class PMSIDataUI:
         self.preview_text.insert(1.0, preview)
     
     def save_data(self):
-        """Save current form data to JSON file"""
+        """Save current form data to JSON file with custom name"""
         data = self.get_form_data()
         is_valid, error_msg = self.validate_data(data)
         
@@ -240,8 +240,27 @@ class PMSIDataUI:
             messagebox.showerror("Validation Error", error_msg)
             return
         
+        # Get scenario name from user
+        scenario_name = tk.simpledialog.askstring(
+            "Save Configuration", 
+            "Enter scenario name:\n(e.g., 'Active_RX_Test', 'Expired_Medication')",
+            parent=self.root
+        )
+        
+        if not scenario_name:
+            return
+        
+        # Clean filename
+        clean_name = "".join(c for c in scenario_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        clean_name = clean_name.replace(' ', '_')
+        
+        if not clean_name:
+            messagebox.showerror("Error", "Please enter a valid scenario name.")
+            return
+        
         try:
-            filename = f"pmsi_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"pmsi_{clean_name}_{timestamp}.json"
             with open(filename, 'w') as f:
                 json.dump(data, f, indent=2)
             messagebox.showinfo("Success", f"Data saved to {filename}")
