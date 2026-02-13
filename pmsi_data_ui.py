@@ -37,8 +37,18 @@ class PMSIDataUI:
         # DocumentDB connection string
         self.docdb_connection_string = "mongodb://docdb_admin:P360DocumentDockerCopy0507@p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017/?ssl=true&retryWrites=false&loadBalanced=false&connectTimeoutMS=10000&authSource=admin&authMechanism=SCRAM-SHA-1"
         
+        # Load environment configuration
+        self.environments = self.load_environment_config()
+        self.current_environment = self.environments.get("default_environment", "QA")
+        self.apply_environment_config()
+        
         # Data fields configuration - easily expandable
         self.data_fields = {
+            "Environment": {
+                "environment": {"label": "Environment", "type": "dropdown", 
+                               "options": list(self.environments.get("environments", {}).keys()), 
+                               "required": True, "default": self.current_environment},
+            },
             "PMSI Configuration": {
                 "pmsi_type": {"label": "PMSI Type", "type": "dropdown", 
                              "options": ["PDX EPS", "Liberty", "McKesson", "Epic", "AtebGen100", "PDX 275"], 
@@ -172,6 +182,9 @@ class PMSIDataUI:
             # Add status change handler for rx_status
             if field_name == "rx_status":
                 widget.bind("<<ComboboxSelected>>", self.on_status_change)
+            # Add environment change handler
+            elif field_name == "environment":
+                widget.bind("<<ComboboxSelected>>", self.on_environment_change)
             widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
         elif config["type"] == "checkbox":
             widget = ttk.Checkbutton(field_frame)
@@ -742,7 +755,7 @@ class PMSIDataUI:
             client.admin.command('ping')
             print("DocumentDB connection successful")
             
-            db = client['p360_daily_docker']
+            db = client[self.docdb_database]
             collection = db['patient']
             
             # Generate patient ID if not provided
@@ -938,7 +951,7 @@ class PMSIDataUI:
         
         try:
             client = MongoClient(self.docdb_connection_string, tlsAllowInvalidCertificates=True)
-            db = client['p360_daily_docker']
+            db = client[self.docdb_database]
             collection = db['patient']
             
             # Insert the patient document
@@ -968,7 +981,7 @@ class PMSIDataUI:
         
         try:
             client = MongoClient(self.docdb_connection_string, tlsAllowInvalidCertificates=True)
-            db = client['p360_daily_docker']
+            db = client[self.docdb_database]
             collection = db['patient']
             
             if search_type:  # Yes - RX Number
@@ -1026,6 +1039,51 @@ class PMSIDataUI:
             
         except Exception as e:
             messagebox.showerror("Search Error", f"Failed to search DocumentDB: {str(e)}")
+    
+    def load_environment_config(self) -> Dict:
+        """Load environment configuration from file"""
+        try:
+            config_path = "environment_config.json"
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Failed to load environment config: {e}")
+            # Return default config if file doesn't exist
+            return {
+                "environments": {
+                    "QA": {
+                        "name": "QA Environment",
+                        "pmsi_api_url": "https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co",
+                        "documentdb_connection": "mongodb://docdb_admin:P360DocumentDockerCopy0507@p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017/?ssl=true&retryWrites=false&loadBalanced=false&connectTimeoutMS=10000&authSource=admin&authMechanism=SCRAM-SHA-1",
+                        "documentdb_database": "p360_daily_docker"
+                    }
+                },
+                "default_environment": "QA"
+            }
+    
+    def apply_environment_config(self):
+        """Apply the current environment configuration"""
+        env_config = self.environments.get("environments", {}).get(self.current_environment, {})
+        
+        if env_config:
+            self.api_base_url = env_config.get("pmsi_api_url", self.api_base_url)
+            self.docdb_connection_string = env_config.get("documentdb_connection", self.docdb_connection_string)
+            self.docdb_database = env_config.get("documentdb_database", "p360_daily_docker")
+            print(f"Switched to {env_config.get('name', self.current_environment)} environment")
+    
+    def on_environment_change(self, event=None):
+        """Handle environment change"""
+        new_environment = self.field_widgets["environment"].get()
+        if new_environment != self.current_environment:
+            self.current_environment = new_environment
+            self.apply_environment_config()
+            
+            # Update window title to show current environment
+            env_name = self.environments.get("environments", {}).get(new_environment, {}).get("name", new_environment)
+            self.root.title(f"PMSI Simulator Data Manager - {env_name}")
+            
+            # Show confirmation
+            messagebox.showinfo("Environment Changed", f"Switched to {env_name}")
     
     def open_calendar(self, entry_widget):
         """Open a simple calendar popup for date selection"""
