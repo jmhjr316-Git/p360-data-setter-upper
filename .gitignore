@@ -41,3 +41,4 @@ pmsi_*.json
 
 # Generated files
 *Response[0-9]*.xml
+docdb_*.json
