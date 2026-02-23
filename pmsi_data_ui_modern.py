@@ -945,11 +945,32 @@ class ModernPMSIUI:
             db = client[self.docdb_database]
             collection = db['patient']
             
+            # Delete existing patient with same identifiers to avoid duplicates
+            first_name = self.patient_data.get("first_name", "")
+            last_name = self.patient_data.get("last_name", "")
+            dob_formatted = self.patient_data.get("dob", "").replace("-", "")
+            phone = self.patient_data.get("phone", "")
+            client_id = float(self.patient_data.get("client_id", "1537"))
+            store_id = float(self.patient_data.get("store_id", "13387"))
+            store_npi = self.patient_data.get("pmsi_store_id", "1821516543")
+            
+            delete_result = collection.delete_many({
+                "firstName": first_name,
+                "lastName": last_name,
+                "dateOfBirth": dob_formatted,
+                "phone.primary": phone,
+                "clientId": client_id,
+                "storeId": store_id,
+                "storeNpi": store_npi
+            })
+            
+            if delete_result.deleted_count > 0:
+                print(f"Deleted {delete_result.deleted_count} existing patient(s) to avoid duplicates")
+            
             # Generate patient ID
             ateb_patient_id = random.randint(20000, 99999)
             
-            # Convert dates
-            dob_formatted = self.patient_data.get("dob", "").replace("-", "")
+            # Convert dates (dob already formatted above)
             
             # Create prescription objects
             prescriptions = []
