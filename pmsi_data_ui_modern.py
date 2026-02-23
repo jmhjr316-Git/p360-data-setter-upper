@@ -23,11 +23,8 @@ except ImportError:
     HAS_BOOTSTRAP = False
     print("ttkbootstrap not available, using standard ttk")
 
-try:
-    from tkcalendar import DateEntry
-    HAS_CALENDAR = True
-except ImportError:
-    HAS_CALENDAR = False
+# Don't use tkcalendar - causes conflicts in PyInstaller
+HAS_CALENDAR = False
 
 try:
     from pymongo import MongoClient
@@ -247,15 +244,8 @@ class ModernPMSIUI:
         # Load existing patient data if available
         for field_name, widget in self.patient_fields.items():
             if field_name in self.patient_data:
-                if HAS_CALENDAR and hasattr(widget, 'set_date'):
-                    try:
-                        date_obj = datetime.strptime(self.patient_data[field_name], '%Y-%m-%d').date()
-                        widget.set_date(date_obj)
-                    except:
-                        pass
-                else:
-                    widget.delete(0, tk.END)
-                    widget.insert(0, self.patient_data[field_name])
+                widget.delete(0, tk.END)
+                widget.insert(0, self.patient_data[field_name])
     
     def show_prescriptions_step(self):
         """Show prescriptions management step"""
@@ -309,14 +299,59 @@ class ModernPMSIUI:
         label_text = f"{label}{'*' if required else ''}"
         ttk.Label(field_frame, text=label_text, width=25).pack(side=LEFT, padx=(0, 10))
         
-        # Input widget
-        if field_type == "date" and HAS_CALENDAR:
-            widget = DateEntry(field_frame, width=20, date_pattern='yyyy-mm-dd')
+        # Input widget with calendar button for dates
+        if field_type == "date":
+            entry_frame = ttk.Frame(field_frame)
+            entry_frame.pack(side=LEFT, fill=X, expand=YES)
+            
+            widget = ttk.Entry(entry_frame, width=35)
+            widget.pack(side=LEFT, fill=X, expand=YES)
+            
+            cal_btn = ttk.Button(entry_frame, text="📅", width=3,
+                               command=lambda: self.show_date_picker(widget))
+            cal_btn.pack(side=LEFT, padx=(5, 0))
         else:
             widget = ttk.Entry(field_frame, width=40)
+            widget.pack(side=LEFT, fill=X, expand=YES)
         
-        widget.pack(side=LEFT, fill=X, expand=YES)
         field_dict[field_name] = widget
+    
+    def show_date_picker(self, entry_widget):
+        """Show simple date picker dialog"""
+        picker = tk.Toplevel(self.root)
+        picker.title("Select Date")
+        picker.geometry("300x200")
+        picker.transient(self.root)
+        picker.grab_set()
+        
+        today = date.today()
+        
+        ttk.Label(picker, text="Year:").pack(pady=5)
+        year_var = tk.StringVar(value=str(today.year))
+        year_spin = ttk.Spinbox(picker, from_=1900, to=2100, textvariable=year_var, width=10)
+        year_spin.pack()
+        
+        ttk.Label(picker, text="Month:").pack(pady=5)
+        month_var = tk.StringVar(value=str(today.month))
+        month_spin = ttk.Spinbox(picker, from_=1, to=12, textvariable=month_var, width=10)
+        month_spin.pack()
+        
+        ttk.Label(picker, text="Day:").pack(pady=5)
+        day_var = tk.StringVar(value=str(today.day))
+        day_spin = ttk.Spinbox(picker, from_=1, to=31, textvariable=day_var, width=10)
+        day_spin.pack()
+        
+        def set_date():
+            try:
+                selected = f"{year_var.get()}-{month_var.get().zfill(2)}-{day_var.get().zfill(2)}"
+                entry_widget.delete(0, tk.END)
+                entry_widget.insert(0, selected)
+                picker.destroy()
+            except:
+                messagebox.showerror("Invalid Date", "Please enter a valid date")
+        
+        ttk.Button(picker, text="Set Date", command=set_date).pack(pady=10)
+        ttk.Button(picker, text="Cancel", command=picker.destroy).pack()
     
     def add_prescription_dialog(self):
         """Show dialog to add a prescription"""
@@ -360,8 +395,16 @@ class ModernPMSIUI:
                     options = ["PDX EPS", "Liberty", "McKesson", "Epic", "AtebGen100", "PDX 275"]
                 widget = ttk.Combobox(field_frame, values=options, state="readonly", width=37)
                 widget.set(options[0])
-            elif field_type == "date" and HAS_CALENDAR:
-                widget = DateEntry(field_frame, width=37, date_pattern='yyyy-mm-dd')
+            elif field_type == "date":
+                entry_frame = ttk.Frame(field_frame)
+                entry_frame.pack(side=LEFT, fill=X, expand=YES)
+                
+                widget = ttk.Entry(entry_frame, width=32)
+                widget.pack(side=LEFT, fill=X, expand=YES)
+                
+                cal_btn = ttk.Button(entry_frame, text="📅", width=3,
+                                   command=lambda w=widget: self.show_date_picker(w))
+                cal_btn.pack(side=LEFT, padx=(5, 0))
             else:
                 widget = ttk.Entry(field_frame, width=40)
             
@@ -377,8 +420,6 @@ class ModernPMSIUI:
             for field_name, widget in rx_fields.items():
                 if isinstance(widget, ttk.Combobox):
                     rx_data[field_name] = widget.get()
-                elif HAS_CALENDAR and hasattr(widget, 'get_date'):
-                    rx_data[field_name] = widget.get_date().strftime('%Y-%m-%d')
                 else:
                     rx_data[field_name] = widget.get().strip()
             
@@ -468,10 +509,7 @@ class ModernPMSIUI:
             # Save and validate patient info
             self.patient_data = {}
             for field_name, widget in self.patient_fields.items():
-                if HAS_CALENDAR and hasattr(widget, 'get_date'):
-                    value = widget.get_date().strftime('%Y-%m-%d')
-                else:
-                    value = widget.get() if hasattr(widget, 'get') else ""
+                value = widget.get() if hasattr(widget, 'get') else ""
                 
                 if not value:
                     messagebox.showerror("Validation Error", f"Please fill in {field_name.replace('_', ' ')}")
