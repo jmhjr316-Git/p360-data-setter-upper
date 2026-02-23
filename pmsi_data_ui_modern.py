@@ -48,6 +48,9 @@ class ModernPMSIUI:
         # Load saved store configurations
         self.saved_stores = self.load_saved_stores()
         
+        # Load saved scenarios
+        self.saved_scenarios = self.load_saved_scenarios()
+        
         # Load environment configuration
         self.environments = self.load_environment_config()
         self.current_environment = self.environments.get("default_environment", "QA")
@@ -95,6 +98,14 @@ class ModernPMSIUI:
         """Load saved store configurations"""
         try:
             with open("saved_stores.json", 'r') as f:
+                return json.load(f)
+        except:
+            return []
+    
+    def load_saved_scenarios(self) -> List[Dict]:
+        """Load saved scenarios"""
+        try:
+            with open("saved_scenarios.json", 'r') as f:
                 return json.load(f)
         except:
             return []
@@ -268,6 +279,46 @@ class ModernPMSIUI:
         card = ttk.LabelFrame(self.content_frame, text="Patient Information")
         card.pack(fill=BOTH, expand=YES, padx=20, pady=20)
         
+        # Load scenario section at top
+        if self.saved_scenarios:
+            load_frame = ttk.Frame(card)
+            load_frame.pack(fill=X, pady=(5, 15), padx=10)
+            
+            ttk.Label(load_frame, text="Load Saved Scenario:", 
+                     font=("Segoe UI", 10, "bold")).pack(side=LEFT, padx=(0, 10))
+            
+            scenario_names = [s["name"] for s in self.saved_scenarios]
+            scenario_combo = ttk.Combobox(load_frame, values=scenario_names, 
+                                         state="readonly", width=30)
+            scenario_combo.pack(side=LEFT, padx=(0, 10))
+            
+            def quick_load():
+                idx = scenario_combo.current()
+                if idx >= 0:
+                    scenario = self.saved_scenarios[idx]
+                    self.patient_data = scenario["patient_data"]
+                    self.prescriptions = scenario["prescriptions"]
+                    # Load personalization setting if saved
+                    if "personalization" in scenario:
+                        self.enable_personalization.set(scenario["personalization"])
+                    self.show_step(0)  # Refresh to show loaded data
+            
+            def quick_submit():
+                idx = scenario_combo.current()
+                if idx >= 0:
+                    scenario = self.saved_scenarios[idx]
+                    self.patient_data = scenario["patient_data"]
+                    self.prescriptions = scenario["prescriptions"]
+                    # Load personalization setting if saved
+                    if "personalization" in scenario:
+                        self.enable_personalization.set(scenario["personalization"])
+                    self.submit_data()
+            
+            ttk.Button(load_frame, text="Load & Submit", 
+                      command=quick_submit).pack(side=LEFT, padx=5)
+            ttk.Button(load_frame, text="Load & Edit", 
+                      command=quick_load).pack(side=LEFT)
+        
         # Patient fields
         self.patient_fields = {}
         
@@ -347,10 +398,30 @@ class ModernPMSIUI:
         card = ttk.LabelFrame(self.content_frame, text="Review Your Data")
         card.pack(fill=BOTH, expand=YES, padx=20, pady=20)
         
+        # Scenario name and load section
+        scenario_frame = ttk.Frame(card)
+        scenario_frame.pack(fill=X, pady=(0, 10), padx=10)
+        
+        ttk.Label(scenario_frame, text="Scenario Name:", width=15).pack(side=LEFT, padx=(0, 5))
+        self.scenario_name_entry = ttk.Entry(scenario_frame, width=30)
+        self.scenario_name_entry.pack(side=LEFT, padx=(0, 10))
+        
+        ttk.Button(scenario_frame, text="Save Scenario", 
+                  command=self.save_scenario).pack(side=LEFT, padx=5)
+        
+        if self.saved_scenarios:
+            ttk.Label(scenario_frame, text="Load Saved:", width=12).pack(side=LEFT, padx=(20, 5))
+            scenario_names = [s["name"] for s in self.saved_scenarios]
+            self.scenario_selector = ttk.Combobox(scenario_frame, values=scenario_names, 
+                                                 state="readonly", width=20)
+            self.scenario_selector.pack(side=LEFT, padx=(0, 5))
+            ttk.Button(scenario_frame, text="Load & Submit", 
+                      command=self.load_scenario, width=15).pack(side=LEFT)
+        
         # Scrolled text for review
         review_text = scrolledtext.ScrolledText(card, height=20, width=80, 
                                                font=("Consolas", 10))
-        review_text.pack(fill=BOTH, expand=YES)
+        review_text.pack(fill=BOTH, expand=YES, pady=(10, 0))
         
         # Build review content
         review_content = self.build_review_content()
@@ -704,6 +775,70 @@ class ModernPMSIUI:
         self.prescriptions = []
         self.enable_personalization.set(False)
         self.show_step(0)
+    
+    def save_scenario(self):
+        """Save current scenario for future use"""
+        scenario_name = self.scenario_name_entry.get().strip()
+        if not scenario_name:
+            messagebox.showerror("Error", "Please enter a scenario name")
+            return
+        
+        scenario = {
+            "name": scenario_name,
+            "patient_data": self.patient_data,
+            "prescriptions": self.prescriptions,
+            "personalization": self.enable_personalization.get(),
+            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        # Check if name exists, update or add
+        existing_idx = next((i for i, s in enumerate(self.saved_scenarios) if s["name"] == scenario_name), None)
+        if existing_idx is not None:
+            if messagebox.askyesno("Overwrite?", f"Scenario '{scenario_name}' exists. Overwrite?"):
+                self.saved_scenarios[existing_idx] = scenario
+            else:
+                return
+        else:
+            self.saved_scenarios.append(scenario)
+        
+        try:
+            with open("saved_scenarios.json", 'w') as f:
+                json.dump(self.saved_scenarios, f, indent=2)
+            messagebox.showinfo("Success", f"Scenario '{scenario_name}' saved!")
+            self.show_step(2)  # Refresh review step
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save scenario: {e}")
+    
+    def load_scenario(self):
+        """Load a saved scenario"""
+        selected_idx = self.scenario_selector.current()
+        if selected_idx < 0:
+            return
+        
+        scenario = self.saved_scenarios[selected_idx]
+        self.patient_data = scenario["patient_data"]
+        self.prescriptions = scenario["prescriptions"]
+        # Load personalization setting if saved
+        if "personalization" in scenario:
+            self.enable_personalization.set(scenario["personalization"])
+        
+        # Ask what to do
+        response = messagebox.askyesnocancel(
+            "Scenario Loaded",
+            f"Scenario '{scenario['name']}' loaded!\n\n" +
+            "Yes = Submit now\n" +
+            "No = Review/edit first\n" +
+            "Cancel = Cancel load"
+        )
+        
+        if response is None:  # Cancel
+            self.patient_data = {}
+            self.prescriptions = []
+            return
+        elif response:  # Yes - Submit now
+            self.submit_data()
+        else:  # No - Review first
+            self.show_step(0)
     
     def prepare_template_variables(self, data: Dict[str, Any], rx_number: str, config: Dict) -> Dict[str, str]:
         """Prepare variables for template replacement"""
