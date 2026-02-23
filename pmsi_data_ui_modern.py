@@ -10,9 +10,13 @@ import json
 from datetime import datetime, date, timedelta
 from typing import Dict, Any, List
 import requests
+import urllib3
 import os
 import sys
 import random
+
+# Disable SSL warnings for internal APIs
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 try:
     import ttkbootstrap as ttk
@@ -152,6 +156,10 @@ class ModernPMSIUI:
         
         # Navigation buttons
         self.create_navigation(main_frame)
+        
+        # Add test API button in header for debugging
+        test_btn = ttk.Button(header_frame, text="Test API", command=self.test_api_connection)
+        test_btn.pack(side=RIGHT, padx=(10, 0))
         
         # Show first step
         self.show_step(0)
@@ -909,23 +917,44 @@ class ModernPMSIUI:
                 "content": content
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            print(f"Uploading to: {url}")
+            print(f"File path: {file_path}")
+            print(f"Content length: {len(content)} chars")
+            
+            # Use shorter timeout and verify=False for SSL issues
+            response = requests.get(url, params=params, timeout=30, verify=False)
+            
+            print(f"Response status: {response.status_code}")
+            print(f"Response text (first 500 chars): {response.text[:500]}")
             
             if response.status_code == 200:
                 try:
                     result = response.json()
-                    return result.get("status") == "success"
-                except:
+                    success = result.get("status") == "success"
+                    print(f"Upload result: {success}")
+                    return success
+                except Exception as json_err:
+                    print(f"JSON parse error: {json_err}")
                     if "Connection refused" in response.text or "127.0.0.1:8081" in response.text:
                         messagebox.showerror("Service Unavailable", 
                                            "PMSI Simulator service is currently unavailable.\n\n" +
                                            "Please contact the development team to restart the service.")
                     return False
             else:
+                print(f"Non-200 status code: {response.status_code}")
                 return False
                 
+        except requests.exceptions.Timeout as e:
+            print(f"Timeout error for {file_path}: {e}")
+            messagebox.showerror("Timeout", f"Request timed out for {file_path}\n\nThe API may be slow or unavailable.")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            print(f"Connection error for {file_path}: {e}")
+            messagebox.showerror("Connection Error", f"Cannot connect to PMSI API\n\n{str(e)}")
+            return False
         except Exception as e:
             print(f"Upload error for {file_path}: {e}")
+            messagebox.showerror("Upload Error", f"Failed to upload {file_path}\n\n{str(e)}")
             return False
     
     def create_personalization_entries(self) -> bool:
@@ -1079,6 +1108,61 @@ class ModernPMSIUI:
             
         except Exception as e:
             print(f"Failed to save DocumentDB entry locally: {e}")
+    
+    def test_api_connection(self):
+        """Test API connectivity with simple list operation"""
+        try:
+            url = f"{self.api_base_url}/pms-manage"
+            params = {
+                "action": "list",
+                "file_path": "PDX"
+            }
+            
+            print(f"Testing API connection to: {url}")
+            print(f"Environment: {self.current_environment}")
+            
+            # Disable SSL warnings for testing
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
+            response = requests.get(url, params=params, timeout=10, verify=False)
+            
+            print(f"Response status: {response.status_code}")
+            print(f"Response text: {response.text[:500]}")
+            
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    if result.get("status") == "success":
+                        files = result.get("files", [])
+                        messagebox.showinfo("API Test Success", 
+                                          f"Connected successfully!\n\n" +
+                                          f"Environment: {self.current_environment}\n" +
+                                          f"URL: {url}\n" +
+                                          f"Files in PDX folder: {len(files)}")
+                    else:
+                        messagebox.showwarning("API Test", f"Response: {result}")
+                except Exception as json_err:
+                    messagebox.showerror("API Test Failed", 
+                                       f"Got response but couldn't parse JSON\n\n" +
+                                       f"Status: {response.status_code}\n" +
+                                       f"Response: {response.text[:200]}")
+            else:
+                messagebox.showerror("API Test Failed", 
+                                   f"HTTP {response.status_code}\n\n{response.text[:200]}")
+        
+        except requests.exceptions.Timeout:
+            messagebox.showerror("API Test Failed", 
+                               f"Request timed out after 10 seconds\n\n" +
+                               f"URL: {url}\n" +
+                               f"The API may be down or unreachable.")
+        except requests.exceptions.ConnectionError as e:
+            messagebox.showerror("API Test Failed", 
+                               f"Cannot connect to API\n\n" +
+                               f"URL: {url}\n" +
+                               f"Error: {str(e)[:200]}")
+        except Exception as e:
+            messagebox.showerror("API Test Failed", f"Error: {str(e)}")
 
 
 
