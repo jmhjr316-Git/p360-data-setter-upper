@@ -51,3 +51,7 @@ docdb_error_*.txt
 
 # Credentials - DO NOT COMMIT
 environment_config.json
+
+# User data - local only
+saved_stores.json
+saved_scenarios.json
