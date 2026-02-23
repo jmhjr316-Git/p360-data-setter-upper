@@ -86,8 +86,8 @@ class ModernPMSIUI:
     def setup_modern_ui(self):
         """Setup the modern UI with wizard steps"""
         # Main container
-        main_frame = ttk.Frame(self.root, padding=20)
-        main_frame.pack(fill=BOTH, expand=YES)
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=BOTH, expand=YES, padx=20, pady=20)
         
         # Header with environment selector
         self.create_header(main_frame)
@@ -225,8 +225,8 @@ class ModernPMSIUI:
     def show_patient_step(self):
         """Show patient information step"""
         # Create card-style container
-        card = ttk.LabelFrame(self.content_frame, text="Patient Information", padding=20)
-        card.pack(fill=BOTH, expand=YES)
+        card = ttk.LabelFrame(self.content_frame, text="Patient Information")
+        card.pack(fill=BOTH, expand=YES, padx=20, pady=20)
         
         # Patient fields
         self.patient_fields = {}
@@ -276,8 +276,8 @@ class ModernPMSIUI:
     def show_review_step(self):
         """Show review and submit step"""
         # Review card
-        card = ttk.LabelFrame(self.content_frame, text="Review Your Data", padding=20)
-        card.pack(fill=BOTH, expand=YES)
+        card = ttk.LabelFrame(self.content_frame, text="Review Your Data")
+        card.pack(fill=BOTH, expand=YES, padx=20, pady=20)
         
         # Scrolled text for review
         review_text = scrolledtext.ScrolledText(card, height=20, width=80, 
@@ -290,8 +290,8 @@ class ModernPMSIUI:
         review_text.configure(state=DISABLED)
         
         # Options
-        options_frame = ttk.LabelFrame(card, text="Submission Options", padding=10)
-        options_frame.pack(fill=X, pady=(10, 0))
+        options_frame = ttk.LabelFrame(card, text="Submission Options")
+        options_frame.pack(fill=X, pady=(10, 0), padx=10)
         
         # Personalization toggle (use existing variable)
         ttk.Checkbutton(options_frame, text="Enable Personalization (Create DocumentDB entries)", 
@@ -326,6 +326,10 @@ class ModernPMSIUI:
         dialog.transient(self.root)
         dialog.grab_set()
         
+        # Add padding frame
+        content = ttk.Frame(dialog)
+        content.pack(fill=BOTH, expand=YES, padx=10, pady=10)
+        
         # Prescription fields
         rx_fields = {}
         
@@ -342,8 +346,8 @@ class ModernPMSIUI:
         ]
         
         for field_name, label, field_type, required in fields:
-            field_frame = ttk.Frame(dialog, padding=5)
-            field_frame.pack(fill=X)
+            field_frame = ttk.Frame(content)
+            field_frame.pack(fill=X, pady=5)
             
             ttk.Label(field_frame, text=f"{label}{'*' if required else ''}", 
                      width=25).pack(side=LEFT)
@@ -365,8 +369,8 @@ class ModernPMSIUI:
             rx_fields[field_name] = widget
         
         # Buttons
-        btn_frame = ttk.Frame(dialog, padding=10)
-        btn_frame.pack(fill=X)
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=X, padx=10, pady=10)
         
         def save_rx():
             rx_data = {}
@@ -403,8 +407,8 @@ class ModernPMSIUI:
     
     def create_prescription_card(self, parent, index, rx_data):
         """Create a card for a prescription"""
-        card = ttk.LabelFrame(parent, text=f"RX #{rx_data.get('rx_number', 'N/A')}", padding=10)
-        card.pack(fill=X, pady=5)
+        card = ttk.LabelFrame(parent, text=f"RX #{rx_data.get('rx_number', 'N/A')}")
+        card.pack(fill=X, pady=5, padx=10)
         
         # RX details
         details = f"Medication: {rx_data.get('medication_name', 'N/A')} | " \
