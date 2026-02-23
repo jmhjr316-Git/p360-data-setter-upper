@@ -55,3 +55,6 @@ environment_config.json
 # User data - local only
 saved_stores.json
 saved_scenarios.json
+
+# Developer guide - local only
+DUAL_REPO_GUIDE.md
