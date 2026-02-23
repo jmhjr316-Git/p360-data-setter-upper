@@ -45,6 +45,9 @@ class ModernPMSIUI:
         else:
             self.base_path = os.path.dirname(os.path.abspath(__file__))
         
+        # Load saved store configurations
+        self.saved_stores = self.load_saved_stores()
+        
         # Load environment configuration
         self.environments = self.load_environment_config()
         self.current_environment = self.environments.get("default_environment", "QA")
@@ -87,6 +90,38 @@ class ModernPMSIUI:
             self.api_base_url = env_config.get("pmsi_api_url", "")
             self.docdb_connection_string = env_config.get("documentdb_connection", "")
             self.docdb_database = env_config.get("documentdb_database", "p360_daily_docker")
+    
+    def load_saved_stores(self) -> List[Dict]:
+        """Load saved store configurations"""
+        try:
+            with open("saved_stores.json", 'r') as f:
+                return json.load(f)
+        except:
+            return []
+    
+    def save_store_config(self, client_id: str, store_id: str, pmsi_store_id: str):
+        """Save store configuration for future use"""
+        store_config = {
+            "client_id": client_id,
+            "store_id": store_id,
+            "pmsi_store_id": pmsi_store_id,
+            "label": f"{client_id} / {store_id} / {pmsi_store_id}"
+        }
+        
+        # Check if already exists
+        for store in self.saved_stores:
+            if (store["client_id"] == client_id and 
+                store["store_id"] == store_id and 
+                store["pmsi_store_id"] == pmsi_store_id):
+                return
+        
+        self.saved_stores.append(store_config)
+        
+        try:
+            with open("saved_stores.json", 'w') as f:
+                json.dump(self.saved_stores, f, indent=2)
+        except Exception as e:
+            print(f"Failed to save store config: {e}")
     
     def setup_modern_ui(self):
         """Setup the modern UI with wizard steps"""
@@ -241,19 +276,54 @@ class ModernPMSIUI:
             ("last_name", "Last Name", "text", True),
             ("dob", "Date of Birth (YYYY-MM-DD)", "date", True),
             ("phone", "Phone Number", "text", True),
+        ]
+        
+        for field_name, label, field_type, required in fields:
+            self.create_field(card, field_name, label, field_type, required, self.patient_fields)
+        
+        # Store configuration section with dropdown
+        store_frame = ttk.LabelFrame(card, text="Store Configuration")
+        store_frame.pack(fill=X, pady=(10, 0), padx=10)
+        
+        # Saved stores dropdown (always show)
+        saved_frame = ttk.Frame(store_frame)
+        saved_frame.pack(fill=X, pady=5, padx=10)
+        
+        ttk.Label(saved_frame, text="Saved Stores:", width=35, anchor='w').pack(side=LEFT, padx=(0, 10))
+        
+        store_labels = [s["label"] for s in self.saved_stores] if self.saved_stores else ["No saved stores"]
+        self.store_selector = ttk.Combobox(saved_frame, values=store_labels, state="readonly", width=35)
+        if store_labels[0] != "No saved stores":
+            self.store_selector.bind("<<ComboboxSelected>>", self.on_store_selected)
+        self.store_selector.pack(side=LEFT, fill=X, expand=YES)
+        
+        # Store fields
+        store_fields = [
             ("client_id", "Client ID", "text", True),
             ("store_id", "Store ID", "text", True),
             ("pmsi_store_id", "PMSI Store ID", "text", True),
         ]
         
-        for field_name, label, field_type, required in fields:
-            self.create_field(card, field_name, label, field_type, required, self.patient_fields)
+        for field_name, label, field_type, required in store_fields:
+            self.create_field(store_frame, field_name, label, field_type, required, self.patient_fields)
         
         # Load existing patient data if available
         for field_name, widget in self.patient_fields.items():
             if field_name in self.patient_data:
                 widget.delete(0, tk.END)
                 widget.insert(0, self.patient_data[field_name])
+    
+    def on_store_selected(self, event=None):
+        """Handle saved store selection"""
+        selected_idx = self.store_selector.current()
+        if selected_idx >= 0:
+            store = self.saved_stores[selected_idx]
+            self.patient_fields["client_id"].delete(0, tk.END)
+            self.patient_fields["client_id"].insert(0, store["client_id"])
+            self.patient_fields["store_id"].delete(0, tk.END)
+            self.patient_fields["store_id"].insert(0, store["store_id"])
+            self.patient_fields["pmsi_store_id"].delete(0, tk.END)
+            self.patient_fields["pmsi_store_id"].insert(0, store["pmsi_store_id"])
     
     def show_prescriptions_step(self):
         """Show prescriptions management step"""
@@ -301,25 +371,25 @@ class ModernPMSIUI:
     def create_field(self, parent, field_name, label, field_type, required, field_dict):
         """Create a form field"""
         field_frame = ttk.Frame(parent)
-        field_frame.pack(fill=X, pady=5)
+        field_frame.pack(fill=X, pady=5, padx=10)
         
-        # Label
+        # Label with fixed width
         label_text = f"{label}{'*' if required else ''}"
-        ttk.Label(field_frame, text=label_text, width=25).pack(side=LEFT, padx=(0, 10))
+        ttk.Label(field_frame, text=label_text, width=35, anchor='w').pack(side=LEFT, padx=(0, 10))
         
         # Input widget with calendar button for dates
         if field_type == "date":
             entry_frame = ttk.Frame(field_frame)
             entry_frame.pack(side=LEFT, fill=X, expand=YES)
             
-            widget = ttk.Entry(entry_frame, width=35)
+            widget = ttk.Entry(entry_frame, width=30)
             widget.pack(side=LEFT, fill=X, expand=YES)
             
             cal_btn = ttk.Button(entry_frame, text="📅", width=3,
                                command=lambda: self.show_date_picker(widget))
             cal_btn.pack(side=LEFT, padx=(5, 0))
         else:
-            widget = ttk.Entry(field_frame, width=40)
+            widget = ttk.Entry(field_frame, width=35)
             widget.pack(side=LEFT, fill=X, expand=YES)
         
         field_dict[field_name] = widget
@@ -328,25 +398,26 @@ class ModernPMSIUI:
         """Show simple date picker dialog"""
         picker = tk.Toplevel(self.root)
         picker.title("Select Date")
-        picker.geometry("300x200")
+        picker.geometry("300x250")
+        picker.resizable(False, False)
         picker.transient(self.root)
         picker.grab_set()
         
         today = date.today()
         
-        ttk.Label(picker, text="Year:").pack(pady=5)
+        ttk.Label(picker, text="Year:", font=("Segoe UI", 10)).pack(pady=(10, 5))
         year_var = tk.StringVar(value=str(today.year))
-        year_spin = ttk.Spinbox(picker, from_=1900, to=2100, textvariable=year_var, width=10)
+        year_spin = ttk.Spinbox(picker, from_=1900, to=2100, textvariable=year_var, width=15)
         year_spin.pack()
         
-        ttk.Label(picker, text="Month:").pack(pady=5)
+        ttk.Label(picker, text="Month:", font=("Segoe UI", 10)).pack(pady=(10, 5))
         month_var = tk.StringVar(value=str(today.month))
-        month_spin = ttk.Spinbox(picker, from_=1, to=12, textvariable=month_var, width=10)
+        month_spin = ttk.Spinbox(picker, from_=1, to=12, textvariable=month_var, width=15)
         month_spin.pack()
         
-        ttk.Label(picker, text="Day:").pack(pady=5)
+        ttk.Label(picker, text="Day:", font=("Segoe UI", 10)).pack(pady=(10, 5))
         day_var = tk.StringVar(value=str(today.day))
-        day_spin = ttk.Spinbox(picker, from_=1, to=31, textvariable=day_var, width=10)
+        day_spin = ttk.Spinbox(picker, from_=1, to=31, textvariable=day_var, width=15)
         day_spin.pack()
         
         def set_date():
@@ -358,8 +429,10 @@ class ModernPMSIUI:
             except:
                 messagebox.showerror("Invalid Date", "Please enter a valid date")
         
-        ttk.Button(picker, text="Set Date", command=set_date).pack(pady=10)
-        ttk.Button(picker, text="Cancel", command=picker.destroy).pack()
+        btn_frame = ttk.Frame(picker)
+        btn_frame.pack(pady=15)
+        ttk.Button(btn_frame, text="Set Date", command=set_date, width=12).pack(side=LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=picker.destroy, width=12).pack(side=LEFT, padx=5)
     
     def add_prescription_dialog(self):
         """Show dialog to add a prescription"""
@@ -390,10 +463,10 @@ class ModernPMSIUI:
         
         for field_name, label, field_type, required in fields:
             field_frame = ttk.Frame(content)
-            field_frame.pack(fill=X, pady=5)
+            field_frame.pack(fill=X, pady=5, padx=10)
             
             ttk.Label(field_frame, text=f"{label}{'*' if required else ''}", 
-                     width=25).pack(side=LEFT)
+                     width=35, anchor='w').pack(side=LEFT, padx=(0, 10))
             
             if field_type == "dropdown":
                 if field_name == "rx_status":
@@ -401,20 +474,20 @@ class ModernPMSIUI:
                              "Ready for Pickup", "Picked Up", "Shipped", "Out of Refills"]
                 else:  # pmsi_type
                     options = ["PDX EPS", "Liberty", "McKesson", "Epic", "AtebGen100", "PDX 275"]
-                widget = ttk.Combobox(field_frame, values=options, state="readonly", width=37)
+                widget = ttk.Combobox(field_frame, values=options, state="readonly", width=33)
                 widget.set(options[0])
             elif field_type == "date":
                 entry_frame = ttk.Frame(field_frame)
                 entry_frame.pack(side=LEFT, fill=X, expand=YES)
                 
-                widget = ttk.Entry(entry_frame, width=32)
+                widget = ttk.Entry(entry_frame, width=28)
                 widget.pack(side=LEFT, fill=X, expand=YES)
                 
                 cal_btn = ttk.Button(entry_frame, text="📅", width=3,
                                    command=lambda w=widget: self.show_date_picker(w))
                 cal_btn.pack(side=LEFT, padx=(5, 0))
             else:
-                widget = ttk.Entry(field_frame, width=40)
+                widget = ttk.Entry(field_frame, width=35)
             
             widget.pack(side=LEFT, fill=X, expand=YES)
             rx_fields[field_name] = widget
@@ -523,6 +596,19 @@ class ModernPMSIUI:
                     messagebox.showerror("Validation Error", f"Please fill in {field_name.replace('_', ' ')}")
                     return False
                 self.patient_data[field_name] = value
+            
+            # Save store configuration
+            self.save_store_config(
+                self.patient_data.get("client_id", ""),
+                self.patient_data.get("store_id", ""),
+                self.patient_data.get("pmsi_store_id", "")
+            )
+            
+            # Refresh store selector dropdown
+            if hasattr(self, 'store_selector'):
+                store_labels = [s["label"] for s in self.saved_stores]
+                self.store_selector['values'] = store_labels
+            
             return True
         elif self.current_step == 1:
             # Validate prescriptions
