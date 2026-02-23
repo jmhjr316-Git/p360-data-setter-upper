@@ -2,6 +2,9 @@ name: Build Executables
 
 on:
   push:
+    branches:
+      - feature/multi-rx-support
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
