@@ -11,6 +11,7 @@ from datetime import datetime, date, timedelta
 from typing import Dict, Any, List
 import requests
 import os
+import sys
 import random
 
 try:
@@ -38,6 +39,12 @@ class ModernPMSIUI:
         self.root.title("PMSI Data Manager - Modern")
         self.root.geometry("1200x800")
         
+        # Get base path for resources (works in both dev and frozen)
+        if getattr(sys, 'frozen', False):
+            self.base_path = sys._MEIPASS
+        else:
+            self.base_path = os.path.dirname(os.path.abspath(__file__))
+        
         # Load environment configuration
         self.environments = self.load_environment_config()
         self.current_environment = self.environments.get("default_environment", "QA")
@@ -55,7 +62,8 @@ class ModernPMSIUI:
     def load_environment_config(self) -> Dict:
         """Load environment configuration from file"""
         try:
-            with open("environment_config.json", 'r') as f:
+            config_path = os.path.join(self.base_path, "environment_config.json")
+            with open(config_path, 'r') as f:
                 return json.load(f)
         except Exception as e:
             print(f"Failed to load environment config: {e}")
@@ -528,7 +536,7 @@ class ModernPMSIUI:
         """Submit all data - generate and upload files for all prescriptions"""
         try:
             # Load template configuration
-            config_path = os.path.join("templates", "template_config.json")
+            config_path = os.path.join(self.base_path, "templates", "template_config.json")
             with open(config_path, 'r') as f:
                 config = json.load(f)
             
@@ -550,7 +558,7 @@ class ModernPMSIUI:
                 
                 # Generate and upload files for this prescription
                 for file_config in config["required_files"]:
-                    template_path = os.path.join("templates", file_config["template"])
+                    template_path = os.path.join(self.base_path, "templates", file_config["template"])
                     output_filename = file_config["output_pattern"].format(rx_number=rx_number)
                     
                     # Read template
