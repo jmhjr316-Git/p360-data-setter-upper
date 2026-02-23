@@ -3,7 +3,7 @@
 ## Building Executables with GitHub Actions
 
 ### Setup
-1. Create a GitHub repository
+1. Create a GitHub repository (public or private)
 2. Push your code to GitHub:
    ```bash
    git remote add origin https://github.com/YOUR_USERNAME/pmsi-data-manager.git
@@ -13,16 +13,17 @@
 
 ### Trigger a Build
 
-#### Option 1: Manual Trigger
+#### Option 1: Manual Trigger (Recommended for Testing)
 1. Go to your GitHub repository
 2. Click "Actions" tab
 3. Select "Build Executables" workflow
-4. Click "Run workflow"
-5. Select branch and click "Run workflow"
-6. Wait for build to complete
-7. Download artifacts from the workflow run
+4. Click "Run workflow" button
+5. Select branch (e.g., `feature/multi-rx-support`)
+6. Click green "Run workflow" button
+7. Wait ~5-10 minutes for build to complete
+8. Download artifacts from the workflow run
 
-#### Option 2: Tag-based Release
+#### Option 2: Tag-based Release (Recommended for Distribution)
 ```bash
 # Create and push a tag
 git tag v1.0.0
@@ -32,46 +33,20 @@ This will:
 - Build Windows .exe
 - Build macOS .dmg
 - Create a GitHub Release with both files attached
+- Files are permanently available in Releases section
 
 ### Download Built Files
-- Go to "Actions" tab → Select workflow run → Download artifacts
-- OR go to "Releases" tab (for tagged releases)
 
----
+**From Workflow Run (Manual trigger):**
+1. Go to "Actions" tab
+2. Click on the workflow run
+3. Scroll to "Artifacts" section
+4. Download `PMSI_Data_Manager_Windows` and `PMSI_Data_Manager_macOS`
 
-## Building Executables with GitLab CI/CD
-
-### Setup
-1. Push code to your corporate GitLab:
-   ```bash
-   git remote add gitlab https://gitlab.yourcompany.com/YOUR_USERNAME/pmsi-data-manager.git
-   git push gitlab main
-   git push gitlab feature/multi-rx-support
-   ```
-
-2. Ensure GitLab runners are available with tags:
-   - `windows` - Windows runner
-   - `macos` - macOS runner
-
-### Trigger a Build
-
-#### Option 1: Push to Branch
-Builds automatically trigger on push to:
-- `main`
-- `feature/multi-rx-support`
-- Any tag
-
-#### Option 2: Create a Release Tag
-```bash
-git tag v1.0.0
-git push gitlab v1.0.0
-```
-
-### Download Built Files
-1. Go to CI/CD → Pipelines
-2. Click on the pipeline
-3. Click on job (build-windows or build-macos)
-4. Click "Download" button for artifacts
+**From Release (Tag trigger):**
+1. Go to "Releases" tab
+2. Click on the release version
+3. Download files from "Assets" section
 
 ---
 
@@ -127,10 +102,10 @@ Output: `dist/PMSI_Data_Manager.dmg`
 - **Build fails**: Check Python version (3.11 recommended)
 - **Missing dependencies**: Ensure requirements.txt is up to date
 
-### GitLab CI/CD Issues
-- **No runners with required tags**: Contact GitLab admin to set up Windows/macOS runners
-- **Permission denied**: Ensure runners have proper permissions
-- **Build fails**: Check runner has Python installed
+### Corporate GitLab
+- GitLab doesn't provide free macOS runners
+- Use GitHub for building, then upload artifacts to GitLab releases manually
+- Or use GitHub as the distribution point
 
 ### Build Issues
 - **Import errors**: Add missing packages to requirements.txt
