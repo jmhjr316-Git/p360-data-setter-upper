@@ -157,10 +157,6 @@ class ModernPMSIUI:
         # Navigation buttons
         self.create_navigation(main_frame)
         
-        # Add test API button in header for debugging
-        test_btn = ttk.Button(header_frame, text="Test API", command=self.test_api_connection)
-        test_btn.pack(side=RIGHT, padx=(10, 0))
-        
         # Show first step
         self.show_step(0)
     
@@ -173,6 +169,10 @@ class ModernPMSIUI:
         title = ttk.Label(header_frame, text="PMSI Data Manager", 
                          font=("Segoe UI", 24, "bold"))
         title.pack(side=LEFT)
+        
+        # Test API button
+        test_btn = ttk.Button(header_frame, text="Test API", command=self.test_api_connection)
+        test_btn.pack(side=RIGHT, padx=(10, 0))
         
         # Environment selector
         env_frame = ttk.Frame(header_frame)
