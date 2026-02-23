@@ -11,9 +11,12 @@
 
 **Mac:**
 1. Download `PMSI_Data_Manager.dmg`
-2. Open the DMG file
-3. Drag the app to your Applications folder
-4. Right-click the app → "Open" (first time only to bypass security)
+2. Double-click the DMG file to mount it
+3. Drag the app to your Applications folder (or run directly from DMG)
+4. **Important:** Right-click the app → "Open" (first time only)
+   - Don't double-click! This bypasses Gatekeeper security
+   - Click "Open" in the security dialog
+5. For future launches, you can double-click normally
 
 ## Setting Up Your Client
 
@@ -183,8 +186,33 @@ Click the **"Test API"** button in the header to verify connectivity to the PMSI
 - Ensure all prescription fields are complete
 
 **App won't open (Mac):**
-- Right-click → Open (don't double-click first time)
-- Go to System Preferences → Security → Allow app
+
+*"Can't be opened because Apple cannot check it for malicious software":*
+1. **Right-click** (or Control+click) the app → "Open" (don't double-click!)
+2. In the dialog, click "Open" again
+3. If no "Open" button appears:
+   - Go to System Settings → Privacy & Security
+   - Scroll down to "Security" section
+   - Click "Open Anyway" next to the app name
+   - Try right-click → "Open" again
+
+*"App is damaged and can't be opened":*
+1. Open Terminal (Applications → Utilities → Terminal)
+2. Type this command and press Enter:
+   ```bash
+   xattr -cr /Applications/PMSI_Data_Manager.app
+   ```
+3. Try opening the app again with right-click → "Open"
+
+*"App is from an unidentified developer":*
+1. System Settings → Privacy & Security
+2. Under "Security" section, click "Open Anyway" next to the blocked app message
+3. Try opening the app again with right-click → "Open"
+
+*Still having issues?*
+- Make sure you're running macOS 10.13 or later
+- Check that you have admin privileges on your Mac
+- Contact IT if corporate security policies are blocking the app
 
 **App won't open (Windows):**
 - Click "More info" → "Run anyway" on security warning
