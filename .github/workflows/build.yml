@@ -26,6 +26,10 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
       
+      - name: Create environment config with secrets
+        run: |
+          echo '{"environments":{"QA":{"name":"QA Environment","pmsi_api_url":"${{ secrets.QA_PMSI_URL }}","documentdb_connection":"${{ secrets.QA_DOCDB_CONNECTION }}","documentdb_database":"${{ secrets.QA_DOCDB_DATABASE }}"},"Staging":{"name":"Staging Environment","pmsi_api_url":"${{ secrets.STAGING_PMSI_URL }}","documentdb_connection":"${{ secrets.STAGING_DOCDB_CONNECTION }}","documentdb_database":"${{ secrets.STAGING_DOCDB_DATABASE }}"}},"default_environment":"QA"}' > environment_config.json
+      
       - name: Build Windows executable
         run: |
           pyinstaller --onefile --windowed --name "PMSI_Data_Manager" --add-data "templates;templates" --add-data "environment_config.json;." pmsi_data_ui_modern.py
@@ -51,6 +55,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+      
+      - name: Create environment config with secrets
+        run: |
+          echo '{"environments":{"QA":{"name":"QA Environment","pmsi_api_url":"${{ secrets.QA_PMSI_URL }}","documentdb_connection":"${{ secrets.QA_DOCDB_CONNECTION }}","documentdb_database":"${{ secrets.QA_DOCDB_DATABASE }}"},"Staging":{"name":"Staging Environment","pmsi_api_url":"${{ secrets.STAGING_PMSI_URL }}","documentdb_connection":"${{ secrets.STAGING_DOCDB_CONNECTION }}","documentdb_database":"${{ secrets.STAGING_DOCDB_DATABASE }}"}},"default_environment":"QA"}' > environment_config.json
       
       - name: Build macOS app
         run: |

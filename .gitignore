@@ -48,3 +48,6 @@ docdb_error_*.txt
 
 # Logs
 *.log
+
+# Credentials - DO NOT COMMIT
+environment_config.json
