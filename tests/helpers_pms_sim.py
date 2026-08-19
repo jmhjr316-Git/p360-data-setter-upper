@@ -89,8 +89,19 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 
 SIM_BASE_URL = "https://ivr-mock-svcs.pc.q.awscloud.private/FsiXmlSimulator/manage.jsp"
-DEFAULT_STORE_NUMBER = "70050001"  # QA store number for client 8000
+DEFAULT_STORE_NUMBER = "70050001"  # QA store number for client 8000 (pmsStoreNumber for XML)
 DEFAULT_CLIENT_ID = 8000
+DEFAULT_STORE_ID = 9001  # OPE store ID (from channel config orgContext URN)
+DEFAULT_STORE_NPI = "1821516543"  # Pharmacy NPI for the store
+
+# Known client → store configuration
+# storeId = OPE store ID (matches urn:OPE-STORE:{storeId} in channel config orgContext)
+# storeNpi = pharmacy NPI
+# pmsStoreNumber = what goes in XML <storeNumber> for the PMS sim
+CLIENT_STORE_CONFIG = {
+    8000: {"store_id": 9001, "store_npi": "1234580001", "pms_store_number": "70050001"},
+    9001: {"store_id": 9001, "store_npi": "1821516543", "pms_store_number": "70050001"},
+}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # XSD ENUMS — the ONLY valid values for rxStatusDescription
@@ -245,6 +256,8 @@ def build_scenario(
     drug_name: str = "LISINOPRIL 10MG TAB",
     store_number: str = DEFAULT_STORE_NUMBER,
     client_id: int = DEFAULT_CLIENT_ID,
+    store_id: int | None = None,
+    store_npi: str | None = None,
     copay: float = 10.0,
     days_supply: int = 30,
     refills_remaining: int = 3,
@@ -263,8 +276,12 @@ def build_scenario(
         rx_number: Prescription number (used in file names)
         patient_first/last/phone/dob: Patient demographics
         drug_name: Drug product name (max 28 chars, auto-truncated)
-        store_number: Must match channel config pmsStoreNumber
+        store_number: pmsStoreNumber — goes in XML <storeNumber> for sim lookup
         client_id: Client ID for P360 patient doc
+        store_id: OPE store ID for P360 (from orgContext URN, e.g., 9001).
+                  If None, looked up from CLIENT_STORE_CONFIG or defaults to client_id.
+        store_npi: Pharmacy NPI for P360 (e.g., "1821516543").
+                   If None, looked up from CLIENT_STORE_CONFIG.
         copay: Copay amount
         days_supply: Days supply on last fill
         refills_remaining: Remaining refills
@@ -346,10 +363,23 @@ def build_scenario(
     # Build P360 patient document
     p360_doc = None
     if include_p360:
+        # Resolve store_id and store_npi from CLIENT_STORE_CONFIG if not explicitly provided
+        resolved_store_id = store_id
+        resolved_store_npi = store_npi
+
+        if resolved_store_id is None or resolved_store_npi is None:
+            client_config = CLIENT_STORE_CONFIG.get(client_id, {})
+            if resolved_store_id is None:
+                resolved_store_id = client_config.get("store_id", client_id)
+            if resolved_store_npi is None:
+                resolved_store_npi = client_config.get("store_npi", DEFAULT_STORE_NPI)
+
         p360_doc = _build_p360_patient(
             rx=rx,
             rx_status=rx_status,
             client_id=client_id,
+            store_id=resolved_store_id,
+            store_npi=resolved_store_npi,
             patient_dob=patient_dob,
         )
 
@@ -613,6 +643,8 @@ def _build_p360_patient(
     rx: SimRx,
     rx_status: RxStatus,
     client_id: int,
+    store_id: int,
+    store_npi: str,
     patient_dob: str,
 ) -> dict[str, Any]:
     """Build a P360 patient document matching the sim Rx data.
@@ -622,6 +654,12 @@ def _build_p360_patient(
     - orgs with e360OrgId/e360StoreId
     - mdfcode ACTIVE
     - patientStatus 0
+
+    IMPORTANT field distinctions:
+    - storeId = OPE store ID (from orgContext URN, e.g., 9001 for urn:OPE-STORE:9001)
+    - storeNpi = pharmacy NPI (e.g., "1821516543" for client 9001)
+    - pmsStoreNumber (rx.store_number) = what goes in XML <storeNumber> for sim lookup
+      These are DIFFERENT values and must not be conflated.
     """
     # Normalize DOB to YYYYMMDD for P360
     dob_p360 = _normalize_dob_to_p360(patient_dob)
@@ -632,12 +670,10 @@ def _build_p360_patient(
     else:
         fill_date_p360 = datetime.now().strftime("%Y%m%d")
 
-    store_id = int(rx.store_number) if rx.store_number.isdigit() else 70050001
-
     return {
         "clientId": client_id,
         "storeId": store_id,
-        "storeNpi": "1234580001",
+        "storeNpi": store_npi,
         "atebPatientId": int(rx.rx_number) if rx.rx_number.isdigit() else 99001,
         "dateOfBirth": dob_p360,
         "name": {

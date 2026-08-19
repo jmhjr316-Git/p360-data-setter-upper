@@ -88,6 +88,9 @@ try:
         RX_STATUS_DESCRIPTIONS,
         DEFAULT_STORE_NUMBER,
         DEFAULT_CLIENT_ID,
+        DEFAULT_STORE_ID,
+        DEFAULT_STORE_NPI,
+        CLIENT_STORE_CONFIG,
         SIM_BASE_URL,
     )
     HAS_BUILDER = True
@@ -387,7 +390,9 @@ class PMSIDataBuilderUI:
         self._store_fields = {}
         store_defs = [
             ("client_id", "Client ID *", str(DEFAULT_CLIENT_ID)),
-            ("store_number", "PMSI Store Number *", DEFAULT_STORE_NUMBER),
+            ("store_number", "PMSI Store Number * (XML)", DEFAULT_STORE_NUMBER),
+            ("store_id", "OPE Store ID (P360)", str(DEFAULT_STORE_ID)),
+            ("store_npi", "Store NPI (P360)", DEFAULT_STORE_NPI),
         ]
         for key, label, default in store_defs:
             row = ttk.Frame(store_card)
@@ -398,6 +403,10 @@ class PMSIDataBuilderUI:
             val = self.patient_data.get(key, default)
             entry.insert(0, val)
             self._store_fields[key] = entry
+
+        # Hint label
+        ttk.Label(store_card, text="Store Number = pmsStoreNumber for XML sim.  Store ID = OPE org context (urn:OPE-STORE:{id}).  NPI = pharmacy NPI.",
+                  font=("Segoe UI", 8, "italic"), foreground="gray", wraplength=600).pack(anchor=W, padx=10, pady=(2, 5))
 
     def _validate_patient(self) -> bool:
         """Validate and save patient/store data."""
@@ -689,6 +698,8 @@ class PMSIDataBuilderUI:
                     drug_name=rx["drug_name"],
                     store_number=self.patient_data.get("store_number", DEFAULT_STORE_NUMBER),
                     client_id=int(self.patient_data.get("client_id", DEFAULT_CLIENT_ID)),
+                    store_id=int(self.patient_data.get("store_id", DEFAULT_STORE_ID)),
+                    store_npi=self.patient_data.get("store_npi", DEFAULT_STORE_NPI),
                     copay=rx.get("copay", 10.0),
                     days_supply=rx.get("days_supply", 30),
                     refills_remaining=rx.get("refills_remaining", 3),
@@ -745,6 +756,8 @@ class PMSIDataBuilderUI:
                     drug_name=rx_data["drug_name"],
                     store_number=self.patient_data.get("store_number", DEFAULT_STORE_NUMBER),
                     client_id=int(self.patient_data.get("client_id", DEFAULT_CLIENT_ID)),
+                    store_id=int(self.patient_data.get("store_id", DEFAULT_STORE_ID)),
+                    store_npi=self.patient_data.get("store_npi", DEFAULT_STORE_NPI),
                     copay=rx_data.get("copay", 10.0),
                     days_supply=rx_data.get("days_supply", 30),
                     refills_remaining=rx_data.get("refills_remaining", 3),
