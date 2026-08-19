@@ -396,13 +396,15 @@ def upload_scenario(scenario: SimScenario, upload_p360: bool = True) -> None:
 
     Args:
         scenario: The SimScenario from build_scenario()
-        upload_p360: If True and scenario has p360_patient, upsert to DocumentDB
+        upload_p360: If True and scenario has p360_patient, upsert to DocumentDB.
+                     Uses ensure_patient_with_rx() to merge prescriptions into
+                     existing patients rather than replacing them.
     """
     upload_rx(scenario.rx)
 
     if upload_p360 and scenario.p360_patient:
-        from tests.helpers_p360 import ensure_patient
-        ensure_patient(scenario.p360_patient)
+        from tests.helpers_p360 import ensure_patient_with_rx
+        ensure_patient_with_rx(scenario.p360_patient)
         logger.info(
             "Uploaded P360 patient for %s %s",
             scenario.rx.patient_first,

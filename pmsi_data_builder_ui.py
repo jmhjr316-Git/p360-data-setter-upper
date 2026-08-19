@@ -101,7 +101,7 @@ except ImportError as e:
     print(f"Ensure {_ACE_TESTS_PATH / 'tests' / 'helpers_pms_sim.py'} exists and httpx is installed")
 
 try:
-    from tests.helpers_p360 import ensure_patient, delete_patient, close as close_p360
+    from tests.helpers_p360 import ensure_patient, ensure_patient_with_rx, delete_patient, close as close_p360
     HAS_P360 = True
 except ImportError:
     HAS_P360 = False
@@ -772,8 +772,8 @@ class PMSIDataBuilderUI:
 
                 # Upload P360 if enabled
                 if self.enable_p360.get() and HAS_P360 and scenario.p360_patient:
-                    ensure_patient(scenario.p360_patient)
-                    results.append(f"   ✅ P360 patient upserted")
+                    ensure_patient_with_rx(scenario.p360_patient)
+                    results.append(f"   ✅ P360 prescription merged")
 
                 self.scenarios.append(scenario)
 
