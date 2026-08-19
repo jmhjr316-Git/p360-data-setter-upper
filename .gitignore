@@ -20,10 +20,14 @@ wheels/
 .installed.cfg
 *.egg
 
+# PyInstaller
+*.manifest
+*.spec
+
 # Virtual environments
 venv/
-env/
 ENV/
+env/
 
 # IDE
 .vscode/
@@ -35,10 +39,22 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Project specific
+# Application specific
 pmsi_*.json
+docdb_*.json
+docdb_error_*.txt
+*.xml
+!templates/*.xml
+
+# Logs
 *.log
 
-# Generated files
-*Response[0-9]*.xml
-docdb_*.json
+# Credentials - DO NOT COMMIT
+environment_config.json
+
+# User data - local only
+saved_stores.json
+saved_scenarios.json
+
+# Developer guide - local only
+DUAL_REPO_GUIDE.md

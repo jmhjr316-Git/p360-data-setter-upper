@@ -1,0 +1,17 @@
+{
+  "environments": {
+    "QA": {
+      "name": "QA Environment",
+      "pmsi_api_url": "https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co",
+      "documentdb_connection": "mongodb://USERNAME:PASSWORD@HOST:27017/?ssl=true&retryWrites=false&loadBalanced=false&connectTimeoutMS=10000&authSource=admin&authMechanism=SCRAM-SHA-1",
+      "documentdb_database": "p360_daily_docker"
+    },
+    "Staging": {
+      "name": "Staging Environment", 
+      "pmsi_api_url": "https://ivr-mock-svcs.pc.s.awscloud.private/",
+      "documentdb_connection": "mongodb://USERNAME:PASSWORD@HOST:27017/p360?ssl=true&retryWrites=true&loadBalanced=false&connectTimeoutMS=10000&authSource=admin&authMechanism=SCRAM-SHA-1",
+      "documentdb_database": "p360"
+    }
+  },
+  "default_environment": "QA"
+}

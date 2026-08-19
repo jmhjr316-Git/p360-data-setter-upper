@@ -524,6 +524,24 @@ curl 'https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=del
 - IVR Mock Services: `https://ivr-mock-svcs.pc.q.platform.enlivenhealth.co/pms-manage?action=list&file_path=`
 - DocumentDB: Connection test via "Search DocDB" button
 
+### Troubleshooting API Hangs
+
+If list/write operations hang but read operations work:
+
+```bash
+# SSH into ivr-mock-svcs container
+kubectl exec -it <ivr-mock-svcs-pod> -- /bin/bash
+
+# Kill and restart the Python proxy
+pkill -f simple_proxy.py
+python3 /tmp/simple_proxy.py &
+
+# Verify it's running
+ps aux | grep simple_proxy.py
+```
+
+The Python proxy on port 8081 can get into a hung state and needs periodic restarts.
+
 ## 📈 Future Enhancements
 
 ### Planned Features

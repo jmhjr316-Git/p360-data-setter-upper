@@ -1,0 +1,101 @@
+name: Build Executables
+
+on:
+  push:
+    branches:
+      - feature/multi-rx-support
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      
+      - name: Create environment config with secrets
+        run: |
+          echo '{"environments":{"QA":{"name":"QA Environment","pmsi_api_url":"${{ secrets.QA_PMSI_URL }}","documentdb_connection":"${{ secrets.QA_DOCDB_CONNECTION }}","documentdb_database":"${{ secrets.QA_DOCDB_DATABASE }}"},"Staging":{"name":"Staging Environment","pmsi_api_url":"${{ secrets.STAGING_PMSI_URL }}","documentdb_connection":"${{ secrets.STAGING_DOCDB_CONNECTION }}","documentdb_database":"${{ secrets.STAGING_DOCDB_DATABASE }}"}},"default_environment":"QA"}' > environment_config.json
+      
+      - name: Build Windows executable
+        run: |
+          pyinstaller --onefile --windowed --name "PMSI_Data_Manager" --add-data "templates;templates" --add-data "environment_config.json;." pmsi_data_ui_modern.py
+      
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PMSI_Data_Manager_Windows
+          path: dist/PMSI_Data_Manager.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      
+      - name: Create environment config with secrets
+        run: |
+          echo '{"environments":{"QA":{"name":"QA Environment","pmsi_api_url":"${{ secrets.QA_PMSI_URL }}","documentdb_connection":"${{ secrets.QA_DOCDB_CONNECTION }}","documentdb_database":"${{ secrets.QA_DOCDB_DATABASE }}"},"Staging":{"name":"Staging Environment","pmsi_api_url":"${{ secrets.STAGING_PMSI_URL }}","documentdb_connection":"${{ secrets.STAGING_DOCDB_CONNECTION }}","documentdb_database":"${{ secrets.STAGING_DOCDB_DATABASE }}"}},"default_environment":"QA"}' > environment_config.json
+      
+      - name: Build macOS app
+        run: |
+          pyinstaller --onefile --windowed --name "PMSI_Data_Manager" --add-data "templates:templates" --add-data "environment_config.json:." pmsi_data_ui_modern.py
+      
+      - name: Create DMG
+        run: |
+          mkdir -p dist/dmg
+          cp -r dist/PMSI_Data_Manager.app dist/dmg/
+          hdiutil create -volname "PMSI Data Manager" -srcfolder dist/dmg -ov -format UDZO dist/PMSI_Data_Manager.dmg
+      
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PMSI_Data_Manager_macOS
+          path: dist/PMSI_Data_Manager.dmg
+
+  create-release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PMSI_Data_Manager_Windows
+      
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PMSI_Data_Manager_macOS
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            PMSI_Data_Manager.exe
+            PMSI_Data_Manager.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
