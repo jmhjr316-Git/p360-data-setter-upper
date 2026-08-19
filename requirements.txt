@@ -2,3 +2,4 @@ requests>=2.25.0
 tkcalendar>=1.6.0
 pymongo>=4.0.0
 ttkbootstrap>=1.10.0
+httpx>=0.27.0

@@ -55,7 +55,9 @@ except ImportError:
 
 # When running from Data_setter_upper, the library lives in ace-tests.
 # Support both Windows native and WSL paths.
+# Also check local tests/ directory (for PyInstaller bundled exe).
 _ACE_TESTS_CANDIDATES = [
+    Path(__file__).parent,                                   # Local (bundled or same dir)
     Path("C:/Source/AI_IVR/New_AI_IVR/ace-tests"),          # Windows native
     Path("/mnt/c/Source/AI_IVR/New_AI_IVR/ace-tests"),      # WSL
     Path(__file__).parent.parent / "AI_IVR" / "New_AI_IVR" / "ace-tests",  # Relative fallback
@@ -63,9 +65,10 @@ _ACE_TESTS_CANDIDATES = [
 
 _ACE_TESTS_PATH = None
 for candidate in _ACE_TESTS_CANDIDATES:
-    if candidate.exists():
+    if (candidate / "tests" / "helpers_pms_sim.py").exists():
         _ACE_TESTS_PATH = candidate
-        sys.path.insert(0, str(candidate))
+        if str(candidate) not in sys.path:
+            sys.path.insert(0, str(candidate))
         break
 
 if _ACE_TESTS_PATH is None:
