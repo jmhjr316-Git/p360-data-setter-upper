@@ -123,8 +123,8 @@ ENVIRONMENTS = {
     },
     "Staging": {
         "name": "Staging Environment",
-        "sim_base_url": "https://ivr-mock-svcs.pc.s.awscloud.private/FsiXmlSimulator/manage.jsp",
-        "description": "Staging (ivr-mock-svcs.pc.s)",
+        "sim_base_url": "http://pmssim-ocp-sit.k8s.raleng.omnicell.com/FsiXmlSimulator/manage.jsp",
+        "description": "Staging (pmssim via Kong ingress)",
     },
 }
 
@@ -377,15 +377,14 @@ class PMSIDataBuilderUI:
         store_card = ttk.LabelFrame(self.content_frame, text="Store Configuration", padding=10)
         store_card.pack(fill=X, pady=(0, 10))
 
-        # Saved stores dropdown
-        if self.saved_stores:
-            ss_frame = ttk.Frame(store_card)
-            ss_frame.pack(fill=X, pady=(0, 8))
-            ttk.Label(ss_frame, text="Saved Stores:", width=28, anchor=W).pack(side=LEFT)
-            labels = [f"{s.get('client_id')} / {s.get('store_number', s.get('pmsi_store_id', ''))}" for s in self.saved_stores]
-            self._store_combo = ttk.Combobox(ss_frame, values=labels, state="readonly", width=28)
-            self._store_combo.pack(side=LEFT, fill=X, expand=YES)
-            self._store_combo.bind("<<ComboboxSelected>>", self._on_store_selected)
+        # Saved stores dropdown (always shown — updates dynamically when stores are saved)
+        ss_frame = ttk.Frame(store_card)
+        ss_frame.pack(fill=X, pady=(0, 8))
+        ttk.Label(ss_frame, text="Saved Stores:", width=28, anchor=W).pack(side=LEFT)
+        labels = [f"{s.get('client_id')} / {s.get('store_number', s.get('pmsi_store_id', ''))}" for s in self.saved_stores]
+        self._store_combo = ttk.Combobox(ss_frame, values=labels, state="readonly", width=28)
+        self._store_combo.pack(side=LEFT, fill=X, expand=YES)
+        self._store_combo.bind("<<ComboboxSelected>>", self._on_store_selected)
 
         self._store_fields = {}
         store_defs = [
@@ -403,6 +402,12 @@ class PMSIDataBuilderUI:
             val = self.patient_data.get(key, default)
             entry.insert(0, val)
             self._store_fields[key] = entry
+
+        # Save / Delete store buttons
+        btn_frame = ttk.Frame(store_card)
+        btn_frame.pack(fill=X, pady=(5, 2))
+        ttk.Button(btn_frame, text="💾 Save Store", command=self._save_current_store).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(btn_frame, text="🗑 Delete Selected Store", command=self._delete_selected_store, bootstyle="outline-danger").pack(side=LEFT)
 
         # Hint label
         ttk.Label(store_card, text="Store Number = pmsStoreNumber for XML sim.  Store ID = OPE org context (urn:OPE-STORE:{id}).  NPI = pharmacy NPI.",
@@ -431,10 +436,59 @@ class PMSIDataBuilderUI:
         idx = self._store_combo.current()
         if idx >= 0:
             store = self.saved_stores[idx]
-            self._store_fields["client_id"].delete(0, END)
-            self._store_fields["client_id"].insert(0, store.get("client_id", str(DEFAULT_CLIENT_ID)))
-            self._store_fields["store_number"].delete(0, END)
-            self._store_fields["store_number"].insert(0, store.get("store_number", store.get("pmsi_store_id", DEFAULT_STORE_NUMBER)))
+            for key, entry in self._store_fields.items():
+                entry.delete(0, END)
+                entry.insert(0, store.get(key, ""))
+
+    def _save_current_store(self):
+        """Save the current store field values to saved_stores.json."""
+        store_data = {}
+        for key, entry in self._store_fields.items():
+            val = entry.get().strip()
+            if not val:
+                messagebox.showerror("Validation", f"Please fill in {key.replace('_', ' ').title()} before saving.")
+                return
+            store_data[key] = val
+
+        # Check for duplicate (same client_id + store_number)
+        label = f"{store_data['client_id']} / {store_data['store_number']}"
+        existing_idx = next(
+            (i for i, s in enumerate(self.saved_stores)
+             if s.get("client_id") == store_data["client_id"]
+             and s.get("store_number", s.get("pmsi_store_id", "")) == store_data["store_number"]),
+            None
+        )
+
+        if existing_idx is not None:
+            if not messagebox.askyesno("Overwrite?", f"Store '{label}' already saved. Overwrite?"):
+                return
+            self.saved_stores[existing_idx] = store_data
+        else:
+            self.saved_stores.append(store_data)
+
+        self._save_json(SAVED_STORES_FILE, self.saved_stores)
+        # Refresh the dropdown
+        labels = [f"{s.get('client_id')} / {s.get('store_number', s.get('pmsi_store_id', ''))}" for s in self.saved_stores]
+        self._store_combo["values"] = labels
+        messagebox.showinfo("Saved", f"Store '{label}' saved!")
+
+    def _delete_selected_store(self):
+        """Delete the currently selected store from saved_stores.json."""
+        idx = self._store_combo.current()
+        if idx < 0:
+            messagebox.showwarning("No Selection", "Select a saved store to delete.")
+            return
+        store = self.saved_stores[idx]
+        label = f"{store.get('client_id')} / {store.get('store_number', store.get('pmsi_store_id', ''))}"
+        if not messagebox.askyesno("Confirm Delete", f"Delete saved store '{label}'?"):
+            return
+        self.saved_stores.pop(idx)
+        self._save_json(SAVED_STORES_FILE, self.saved_stores)
+        # Refresh the dropdown
+        labels = [f"{s.get('client_id')} / {s.get('store_number', s.get('pmsi_store_id', ''))}" for s in self.saved_stores]
+        self._store_combo["values"] = labels
+        self._store_combo.set("")
+        messagebox.showinfo("Deleted", f"Store '{label}' removed.")
 
     # ──────────────────────────────────────────────────────────────────────────
     # Step 2: Prescriptions
