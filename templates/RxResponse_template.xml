@@ -16,8 +16,9 @@
     <rxDataGroup>
         <rxDataItem>
             <number>{{rx_number}}</number>
-            <rxStatusCode>000</rxStatusCode>
+            <rxStatusCode>{{rx_status_code}}</rxStatusCode>
             <rxStatusDescription>{{rx_status_description}}</rxStatusDescription>
+            {{reject_code_block}}
             <rxInformation>
                 <refillable>{{refillable}}</refillable>
                 <authorizedRefills>3</authorizedRefills>

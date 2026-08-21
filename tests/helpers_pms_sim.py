@@ -1067,3 +1067,542 @@ def create_too_soon(rx_number: str, **kwargs) -> SimScenario:
     scenario = build_scenario(rx_status=RxStatus.TOO_SOON, rx_number=rx_number, **kwargs)
     upload_scenario(scenario)
     return scenario
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# McKESSON (PerSe) SIMULATOR SUPPORT
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# McKesson uses the PerSe simulator servlet. Files live at:
+#   WEB-INF/rsp/PerSe/RxInfoRsp{rxnum}.xml
+#   WEB-INF/rsp/PerSe/SubmitIVROrderRsp{rxnum}.xml
+#
+# Status is driven by FillInfo attributes:
+#   IsReady=true                           → READY_FOR_PICKUP
+#   IsReady=false, NotReadyReasonCode=1    → IN_QUEUE
+#   IsReady=false, NotReadyReasonCode=2    → PICKED_UP (check releaseDate)
+#   IsRefillable=false, NotRefillableReasonCode:
+#     1 → READY_FOR_PICKUP (via not-refillable path)
+#     2 → IN_QUEUE (via not-refillable path)
+#     3 → CONTROLLED_SUBSTANCE (CII)
+#     4 → OUT_OF_REFILLS
+#     5 → EXPIRED
+#     6 → TRANSFERRED
+#     7 → DEACTIVATED
+#     8 → TOO_SOON
+#     9 → OUT_OF_STOCK
+#    10 → special handling in code
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class McKessonStatus(str, Enum):
+    """Desired McKesson rx status outcomes the builder can produce."""
+
+    READY_FOR_PICKUP = "READY_FOR_PICKUP"
+    IN_QUEUE = "IN_QUEUE"
+    REFILLABLE = "REFILLABLE"
+    RX_PICKED_UP = "RX_PICKED_UP"
+    NOT_REFILLABLE_EXPIRED = "NOT_REFILLABLE_EXPIRED"
+    NOT_REFILLABLE_NO_REFILLS = "NOT_REFILLABLE_NO_REFILLS"
+    CONTROLLED_SUBSTANCE = "CONTROLLED_SUBSTANCE"
+    TOO_SOON = "TOO_SOON"
+    TRANSFERRED = "TRANSFERRED"
+    DEACTIVATED = "DEACTIVATED"
+
+
+@dataclass
+class McKessonRx:
+    """McKesson/PerSe prescription data for the simulator."""
+
+    rx_number: str
+    drug_name: str
+    store_number: str = "125"
+    patient_first: str = "TEST"
+    patient_last: str = "MCKESSON"
+    patient_dob: str = "1975-08-22"  # Format: YYYY-MM-DD
+    patient_phone: str = "555-234-5678"
+    patient_id: str = "1078600"
+    refills_remaining: str = "3"
+    refills_authorized: str = "5"
+    days_supply: int = 30
+    quantity: int = 30
+    copay: str = "25"
+    sig_text: str = "TAKE ONE TABLET BY MOUTH DAILY"
+    dea_class: str = "0"  # 0=non-controlled, 2=CII, etc.
+    ndc: str = "00093751001"
+    prescriber_first: str = "JOHN"
+    prescriber_last: str = "SMITH"
+    expiration_date: str = "2028-12-31"
+    # FillInfo attributes
+    is_ready: bool = False
+    is_refillable: bool = True
+    refill_qty: int = 30
+    # NotReadyInfo (when is_ready=False and is_refillable=True)
+    not_ready_reason_code: str | None = None  # "1"=in queue, "2"=picked up
+    released_to_patient_datetime: str | None = None
+    # NotRefillableInfo (when is_refillable=False)
+    not_refillable_reason_code: str | None = None
+    is_doctor_auth_allowed: str = "false"
+    # ReadyInfo (when is_ready=True)
+    patient_pay_amount: str | None = None
+    # Fill dates
+    first_fill_date: str = "2025-06-01"
+    last_fill_date: str = "2026-05-01"
+    last_fill_number: str = "3"
+
+
+@dataclass
+class McKessonScenario:
+    """A complete McKesson test scenario."""
+
+    rx: McKessonRx
+    status: McKessonStatus
+    p360_patient: dict[str, Any] | None = None
+    notes: str = ""
+
+
+# McKesson status recipes
+_MCKESSON_STATUS_RECIPES: dict[McKessonStatus, dict[str, Any]] = {
+    McKessonStatus.READY_FOR_PICKUP: {
+        "is_ready": True,
+        "is_refillable": True,
+        "patient_pay_amount": "25",
+        "not_ready_reason_code": None,
+        "not_refillable_reason_code": None,
+    },
+    McKessonStatus.IN_QUEUE: {
+        "is_ready": False,
+        "is_refillable": True,
+        "not_ready_reason_code": "1",
+        "not_refillable_reason_code": None,
+    },
+    McKessonStatus.REFILLABLE: {
+        "is_ready": False,
+        "is_refillable": True,
+        "not_ready_reason_code": "2",
+        "released_to_patient_datetime": None,  # will be computed
+        "not_refillable_reason_code": None,
+    },
+    McKessonStatus.RX_PICKED_UP: {
+        "is_ready": False,
+        "is_refillable": True,
+        "not_ready_reason_code": "2",
+        "released_to_patient_datetime": None,  # will be computed (recent)
+        "not_refillable_reason_code": None,
+    },
+    McKessonStatus.NOT_REFILLABLE_EXPIRED: {
+        "is_ready": False,
+        "is_refillable": False,
+        "not_refillable_reason_code": "5",
+        "is_doctor_auth_allowed": "false",
+    },
+    McKessonStatus.NOT_REFILLABLE_NO_REFILLS: {
+        "is_ready": False,
+        "is_refillable": False,
+        "not_refillable_reason_code": "4",
+        "is_doctor_auth_allowed": "true",
+        "refills_remaining": "0",
+    },
+    McKessonStatus.CONTROLLED_SUBSTANCE: {
+        "is_ready": False,
+        "is_refillable": False,
+        "not_refillable_reason_code": "3",
+        "is_doctor_auth_allowed": "false",
+        "dea_class": "2",
+        "refills_remaining": "0",
+    },
+    McKessonStatus.TOO_SOON: {
+        "is_ready": False,
+        "is_refillable": False,
+        "not_refillable_reason_code": "8",
+        "is_doctor_auth_allowed": "false",
+    },
+    McKessonStatus.TRANSFERRED: {
+        "is_ready": False,
+        "is_refillable": False,
+        "not_refillable_reason_code": "6",
+        "is_doctor_auth_allowed": "false",
+    },
+    McKessonStatus.DEACTIVATED: {
+        "is_ready": False,
+        "is_refillable": False,
+        "not_refillable_reason_code": "7",
+        "is_doctor_auth_allowed": "false",
+    },
+}
+
+
+def build_mckesson_scenario(
+    status: McKessonStatus,
+    rx_number: str,
+    patient_first: str = "TEST",
+    patient_last: str = "MCKESSON",
+    patient_phone: str = "555-234-5678",
+    patient_dob: str = "1975-08-22",
+    drug_name: str = "METFORMIN 500MG TAB",
+    store_number: str = "125",
+    client_id: int = 9000,
+    copay: str = "25",
+    days_supply: int = 30,
+    refills_remaining: str = "3",
+    refills_authorized: str = "5",
+    dea_class: str = "0",
+    include_p360: bool = True,
+    store_id: int = DEFAULT_STORE_ID,
+    store_npi: str = DEFAULT_STORE_NPI,
+) -> McKessonScenario:
+    """Build a McKesson/PerSe scenario for a desired status outcome.
+
+    Args:
+        status: The desired McKesson rx status outcome.
+        rx_number: The prescription number.
+        patient_first: Patient first name.
+        patient_last: Patient last name.
+        patient_phone: Patient phone (format: XXX-XXX-XXXX or 10 digits).
+        patient_dob: Patient DOB (YYYY-MM-DD format).
+        drug_name: Drug name (no length limit for McKesson).
+        store_number: McKesson store number.
+        client_id: Client ID for P360.
+        copay: Patient copay amount (string).
+        days_supply: Days supply per fill.
+        refills_remaining: Refills remaining.
+        refills_authorized: Refills authorized.
+        dea_class: DEA schedule (0=non-controlled, 2=CII, etc.).
+        include_p360: Whether to build P360 patient data.
+        store_id: OPE store ID for P360.
+        store_npi: Store NPI for P360.
+
+    Returns:
+        McKessonScenario with rx data and optional P360 patient.
+    """
+    now = datetime.now()
+    recipe = _MCKESSON_STATUS_RECIPES[status].copy()
+
+    # Override dea_class from recipe if specified
+    if "dea_class" in recipe:
+        dea_class = recipe.pop("dea_class")
+    if "refills_remaining" in recipe:
+        refills_remaining = recipe.pop("refills_remaining")
+
+    # Compute dates based on status
+    if status == McKessonStatus.REFILLABLE:
+        # Picked up long ago (> 5 days)
+        release_dt = now - timedelta(days=90)
+        recipe["released_to_patient_datetime"] = release_dt.strftime("%Y-%m-%dT%H:%M:%S.000-04:00")
+        last_fill = (now - timedelta(days=90)).strftime("%Y-%m-%d")
+    elif status == McKessonStatus.RX_PICKED_UP:
+        # Picked up recently (≤ 5 days)
+        release_dt = now - timedelta(days=2)
+        recipe["released_to_patient_datetime"] = release_dt.strftime("%Y-%m-%dT%H:%M:%S.000-04:00")
+        last_fill = (now - timedelta(days=2)).strftime("%Y-%m-%d")
+    elif status == McKessonStatus.IN_QUEUE:
+        last_fill = (now - timedelta(days=60)).strftime("%Y-%m-%d")
+    elif status == McKessonStatus.READY_FOR_PICKUP:
+        last_fill = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    else:
+        last_fill = (now - timedelta(days=60)).strftime("%Y-%m-%d")
+
+    first_fill = (now - timedelta(days=180)).strftime("%Y-%m-%d")
+
+    # Normalize DOB to YYYY-MM-DD for PerSe XML (McKesson adapter requires ISO date)
+    dob_for_xml = patient_dob
+    if len(patient_dob) == 8 and patient_dob.isdigit():
+        # Convert YYYYMMDD → YYYY-MM-DD
+        dob_for_xml = f"{patient_dob[:4]}-{patient_dob[4:6]}-{patient_dob[6:8]}"
+
+    rx = McKessonRx(
+        rx_number=rx_number,
+        drug_name=drug_name,
+        store_number=store_number,
+        patient_first=patient_first,
+        patient_last=patient_last,
+        patient_dob=dob_for_xml,
+        patient_phone=patient_phone,
+        refills_remaining=refills_remaining,
+        refills_authorized=refills_authorized,
+        days_supply=days_supply,
+        quantity=days_supply,
+        copay=copay,
+        sig_text="TAKE ONE TABLET BY MOUTH DAILY",
+        dea_class=dea_class,
+        expiration_date="2028-12-31",
+        is_ready=recipe.get("is_ready", False),
+        is_refillable=recipe.get("is_refillable", True),
+        refill_qty=days_supply,
+        not_ready_reason_code=recipe.get("not_ready_reason_code"),
+        released_to_patient_datetime=recipe.get("released_to_patient_datetime"),
+        not_refillable_reason_code=recipe.get("not_refillable_reason_code"),
+        is_doctor_auth_allowed=recipe.get("is_doctor_auth_allowed", "false"),
+        patient_pay_amount=recipe.get("patient_pay_amount"),
+        first_fill_date=first_fill,
+        last_fill_date=last_fill,
+    )
+
+    # Build P360 patient if requested
+    p360_patient = None
+    if include_p360:
+        phone_digits = patient_phone.replace("-", "").replace(" ", "")
+        dob_p360 = patient_dob.replace("-", "")
+        fill_date_p360 = last_fill.replace("-", "")
+        p360_patient = {
+            "clientId": client_id,
+            "storeId": store_id,
+            "storeNpi": store_npi,
+            "atebPatientId": int(rx_number) if rx_number.isdigit() else 99001,
+            "dateOfBirth": dob_p360,
+            "name": {
+                "firstName": patient_first,
+                "lastName": patient_last,
+            },
+            "phone": {
+                "primary": phone_digits,
+            },
+            "search": {
+                "lastNameUpper": patient_last.upper(),
+                "firstNameUpper": patient_first.upper(),
+                "dob": dob_p360,
+                "phoneNumber": phone_digits,
+            },
+            "orgs": [
+                {
+                    "e360OrgId": client_id,
+                    "e360StoreId": store_id,
+                }
+            ],
+            "mdfcode": "ACTIVE",
+            "patientStatus": 0,
+            "prescriptions": [
+                {
+                    "medication": {
+                        "medicationName": drug_name,
+                        "ndc": rx.ndc,
+                    },
+                    "rxNum": rx_number,
+                    "fillDate": fill_date_p360,
+                    "daysSupply": days_supply,
+                    "refillsRemaining": int(refills_remaining),
+                    "originalRefillsAuth": int(refills_authorized),
+                    "rxStatus": "OPEN",
+                }
+            ],
+        }
+
+    return McKessonScenario(
+        rx=rx,
+        status=status,
+        p360_patient=p360_patient,
+        notes=f"McKesson {status.value} — {drug_name}",
+    )
+
+
+def _build_mckesson_rx_info_xml(rx: McKessonRx) -> str:
+    """Build the PerSe RxInfoRsp XML for a McKesson prescription."""
+    # Build FillInfo children
+    fill_children = ""
+
+    if rx.is_ready and rx.patient_pay_amount:
+        fill_children += f'          <ns2:ReadyInfo PatientPayAmount="{rx.patient_pay_amount}" />\n'
+
+    if not rx.is_ready and rx.not_ready_reason_code:
+        release_attr = ""
+        if rx.released_to_patient_datetime:
+            release_attr = f' ReleasedToPatientDateTime="{rx.released_to_patient_datetime}"'
+        fill_children += f'          <ns2:NotReadyInfo{release_attr} NotReadyReasonCode="{rx.not_ready_reason_code}" />\n'
+
+    if not rx.is_refillable and rx.not_refillable_reason_code:
+        fill_children += f'          <ns2:NotRefillableInfo NotRefillableReasonCode="{rx.not_refillable_reason_code}" IsDoctorAuthAllowed="{rx.is_doctor_auth_allowed}" />\n'
+
+    xml = f'''<?xml version="1.0" encoding="UTF-8"?>
+<ns1:Envelope xmlns:ns1="http://schemas.xmlsoap.org/soap/envelope/">
+  <ns1:Header>
+    <ns2:MsgHeader xmlns:ns2="http://www.techrx.com/trexone/1_1" TimeStamp="{datetime.now().strftime("%Y-%m-%dT%H:%M:%S.000-04:00")}" SourceID="TRexOne" Version="1.1" MsgName="RxInfoRsp" DestinationID="Ateb" MsgID="1{rx.rx_number}" />
+  </ns1:Header>
+  <ns1:Body>
+    <ns2:RxInfoRsp xmlns:ns2="http://www.techrx.com/trexone/1_1">
+      <ns2:RxInfoFound StoreNum="{rx.store_number}" RxNum="{rx.rx_number}">
+        <ns2:PatientInfo>
+          <ns3:LastName xmlns:ns3="http://www.techrx.com/trexone/1_0">{rx.patient_last}</ns3:LastName>
+          <ns3:FirstName xmlns:ns3="http://www.techrx.com/trexone/1_0">{rx.patient_first}</ns3:FirstName>
+          <ns3:DateOfBirth xmlns:ns3="http://www.techrx.com/trexone/1_0">{rx.patient_dob}</ns3:DateOfBirth>
+          <ns3:PrimaryPhone xmlns:ns3="http://www.techrx.com/trexone/1_0">{rx.patient_phone}</ns3:PrimaryPhone>
+          <ns3:ExternalPatientID xmlns:ns3="http://www.techrx.com/trexone/1_0">{rx.patient_id}</ns3:ExternalPatientID>
+          <ns3:Extension xmlns:ns3="http://www.techrx.com/trexone/1_0">
+            <ns3:Address type="primary" State="NC" City="RALEIGH" Zip="27604" Line1="100 TEST ST" />
+            <ns3:SSN />
+            <ns3:Gender>M</ns3:Gender>
+          </ns3:Extension>
+        </ns2:PatientInfo>
+        <ns2:FillInfo IsReady="{str(rx.is_ready).lower()}" RefillQty="{rx.refill_qty}" IsRefillable="{str(rx.is_refillable).lower()}">
+{fill_children}          <ns2:Extension>
+            <ns2:NextRefillDate>1900-01-01</ns2:NextRefillDate>
+            <ns2:PrescriberInfo LastName="{rx.prescriber_last}" FirstName="{rx.prescriber_first}" DEANumber="1234567" />
+            <ns2:RxInfo RefillsRemaining="{rx.refills_remaining}" RefillsAuthorized="{rx.refills_authorized}" ExpirationDate="{rx.expiration_date}" SigText="{rx.sig_text}" DrugName="{rx.drug_name}"{f' DEAClass="{rx.dea_class}"' if rx.dea_class and rx.dea_class != "0" else ""}>
+              <ns3:FirstFill xmlns:ns3="http://www.techrx.com/trexone/1_0" DaysSupply="{rx.days_supply}" FillNumber="0" FillDate="{rx.first_fill_date}" Quantity="{rx.quantity}" />
+              <ns3:LastFill xmlns:ns3="http://www.techrx.com/trexone/1_0" DaysSupply="{rx.days_supply}" FillNumber="{rx.last_fill_number}" FillDate="{rx.last_fill_date}" Quantity="{rx.quantity}" />
+            </ns2:RxInfo>
+            <ns2:DispensedNDC>{rx.ndc}</ns2:DispensedNDC>
+          </ns2:Extension>
+        </ns2:FillInfo>
+        <ns2:ProductInfo NDC="{rx.ndc}" QtyOnHand="50.0" />
+      </ns2:RxInfoFound>
+    </ns2:RxInfoRsp>
+  </ns1:Body>
+</ns1:Envelope>'''
+    return xml
+
+
+def _build_mckesson_refill_response_xml(rx: McKessonRx) -> str:
+    """Build the PerSe SubmitIVROrderRsp (refill success) XML."""
+    return '''<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope
+    xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:trex1_0="http://www.techrx.com/trexone/1_0"
+    xmlns:trex1_1="http://www.techrx.com/trexone/1_1">
+  <soap:Header>
+    <trex1_1:MsgHeader
+        MsgName="GenericSuccessRsp"
+        Version="1.0"
+        SourceID="TestServlet"
+        DestinationID="Ateb"
+        MsgID="1" />
+  </soap:Header>
+  <soap:Body>
+    <trex1_0:GenericSuccessRsp />
+  </soap:Body>
+</soap:Envelope>'''
+
+
+def upload_mckesson_rx(rx: McKessonRx) -> None:
+    """Upload McKesson/PerSe response files to the simulator.
+
+    Creates RxInfoRsp and SubmitIVROrderRsp files at PerSe/{Type}{rx_number}.xml.
+    """
+    files = {
+        f"PerSe/RxInfoRsp{rx.rx_number}.xml": _build_mckesson_rx_info_xml(rx),
+        f"PerSe/SubmitIVROrderRsp{rx.rx_number}.xml": _build_mckesson_refill_response_xml(rx),
+    }
+
+    with httpx.Client(verify=False, timeout=10.0) as client:
+        for file_path, content in files.items():
+            encoded_content = urllib.parse.quote(content)
+            url = f"{SIM_BASE_URL}?action=write&file_path={file_path}&content={encoded_content}"
+            resp = client.get(url)
+            if resp.status_code != 200 or "error" in resp.text.lower():
+                raise RuntimeError(
+                    f"Failed to upload {file_path}: {resp.status_code} {resp.text[:200]}"
+                )
+            logger.debug("Uploaded %s", file_path)
+
+    logger.info(
+        "Uploaded McKesson sim data for rx %s (%s) — %s/%s",
+        rx.rx_number,
+        rx.drug_name,
+        "ready" if rx.is_ready else "not-ready",
+        "refillable" if rx.is_refillable else "not-refillable",
+    )
+
+
+def delete_mckesson_rx(rx_number: str) -> None:
+    """Delete McKesson/PerSe response files from the simulator."""
+    files = [
+        f"PerSe/RxInfoRsp{rx_number}.xml",
+        f"PerSe/SubmitIVROrderRsp{rx_number}.xml",
+    ]
+
+    with httpx.Client(verify=False, timeout=10.0) as client:
+        for file_path in files:
+            url = f"{SIM_BASE_URL}?action=delete&file_path={file_path}"
+            client.get(url)
+
+    logger.info("Deleted McKesson sim data for rx %s", rx_number)
+
+
+def upload_mckesson_scenario(scenario: McKessonScenario, upload_p360: bool = True) -> None:
+    """Upload a McKesson scenario to the simulator and optionally P360."""
+    upload_mckesson_rx(scenario.rx)
+
+    if upload_p360 and scenario.p360_patient:
+        from tests.helpers_p360 import ensure_patient_with_rx
+        ensure_patient_with_rx(scenario.p360_patient)
+        logger.info(
+            "Uploaded P360 patient for %s %s (McKesson)",
+            scenario.rx.patient_first,
+            scenario.rx.patient_last,
+        )
+
+
+def delete_mckesson_scenario(scenario: McKessonScenario, delete_p360: bool = False) -> None:
+    """Delete a McKesson scenario's sim data."""
+    delete_mckesson_rx(scenario.rx.rx_number)
+
+    if delete_p360 and scenario.p360_patient:
+        from tests.helpers_p360 import delete_patient
+        delete_patient(
+            client_id=scenario.p360_patient["clientId"],
+            phone=scenario.p360_patient["phone"]["primary"],
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# McKesson convenience one-liners
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def create_mckesson_ready_for_pickup(rx_number: str, **kwargs) -> McKessonScenario:
+    """Create and upload a McKesson READY_FOR_PICKUP scenario."""
+    scenario = build_mckesson_scenario(status=McKessonStatus.READY_FOR_PICKUP, rx_number=rx_number, **kwargs)
+    upload_mckesson_scenario(scenario)
+    return scenario
+
+
+def create_mckesson_in_queue(rx_number: str, **kwargs) -> McKessonScenario:
+    """Create and upload a McKesson IN_QUEUE scenario."""
+    scenario = build_mckesson_scenario(status=McKessonStatus.IN_QUEUE, rx_number=rx_number, **kwargs)
+    upload_mckesson_scenario(scenario)
+    return scenario
+
+
+def create_mckesson_refillable(rx_number: str, **kwargs) -> McKessonScenario:
+    """Create and upload a McKesson REFILLABLE scenario."""
+    scenario = build_mckesson_scenario(status=McKessonStatus.REFILLABLE, rx_number=rx_number, **kwargs)
+    upload_mckesson_scenario(scenario)
+    return scenario
+
+
+def create_mckesson_picked_up(rx_number: str, **kwargs) -> McKessonScenario:
+    """Create and upload a McKesson RX_PICKED_UP scenario (recently picked up)."""
+    scenario = build_mckesson_scenario(status=McKessonStatus.RX_PICKED_UP, rx_number=rx_number, **kwargs)
+    upload_mckesson_scenario(scenario)
+    return scenario
+
+
+def create_mckesson_controlled(rx_number: str, **kwargs) -> McKessonScenario:
+    """Create and upload a McKesson CONTROLLED_SUBSTANCE scenario."""
+    scenario = build_mckesson_scenario(status=McKessonStatus.CONTROLLED_SUBSTANCE, rx_number=rx_number, **kwargs)
+    upload_mckesson_scenario(scenario)
+    return scenario
+
+
+def create_mckesson_too_soon(rx_number: str, **kwargs) -> McKessonScenario:
+    """Create and upload a McKesson TOO_SOON scenario."""
+    scenario = build_mckesson_scenario(status=McKessonStatus.TOO_SOON, rx_number=rx_number, **kwargs)
+    upload_mckesson_scenario(scenario)
+    return scenario
+
+
+def create_mckesson_expired(rx_number: str, **kwargs) -> McKessonScenario:
+    """Create and upload a McKesson NOT_REFILLABLE_EXPIRED scenario."""
+    scenario = build_mckesson_scenario(status=McKessonStatus.NOT_REFILLABLE_EXPIRED, rx_number=rx_number, **kwargs)
+    upload_mckesson_scenario(scenario)
+    return scenario
+
+
+def create_mckesson_no_refills(rx_number: str, **kwargs) -> McKessonScenario:
+    """Create and upload a McKesson NOT_REFILLABLE_NO_REFILLS scenario."""
+    scenario = build_mckesson_scenario(status=McKessonStatus.NOT_REFILLABLE_NO_REFILLS, rx_number=rx_number, **kwargs)
+    upload_mckesson_scenario(scenario)
+    return scenario
+
+
+# List of McKesson statuses available for the UI
+MCKESSON_AVAILABLE_STATUSES = list(McKessonStatus)

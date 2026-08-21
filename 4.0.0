@@ -1,0 +1,17 @@
+Requirement already satisfied: requests in C:\Users\15558\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (2.33.1)
+Collecting tkcalendar
+  Downloading tkcalendar-1.6.1-py3-none-any.whl.metadata (22 kB)
+Requirement already satisfied: pymongo in C:\Users\15558\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (4.17.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in C:\Users\15558\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (from requests) (3.4.7)
+Requirement already satisfied: idna<4,>=2.5 in C:\Users\15558\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (from requests) (3.13)
+Requirement already satisfied: urllib3<3,>=1.26 in C:\Users\15558\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (from requests) (2.6.3)
+Requirement already satisfied: certifi>=2023.5.7 in C:\Users\15558\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (from requests) (2026.4.22)
+Collecting babel (from tkcalendar)
+  Downloading babel-2.18.0-py3-none-any.whl.metadata (2.2 kB)
+Requirement already satisfied: dnspython<3.0.0,>=2.6.1 in C:\Users\15558\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages (from pymongo) (2.8.0)
+Downloading tkcalendar-1.6.1-py3-none-any.whl (40 kB)
+Downloading babel-2.18.0-py3-none-any.whl (10.2 MB)
+   ---------------------------------------- 10.2/10.2 MB 26.2 MB/s  0:00:00
+Installing collected packages: babel, tkcalendar
+
+Successfully installed babel-2.18.0 tkcalendar-1.6.1

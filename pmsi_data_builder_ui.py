@@ -92,6 +92,14 @@ try:
         DEFAULT_STORE_NPI,
         CLIENT_STORE_CONFIG,
         SIM_BASE_URL,
+        # McKesson support
+        McKessonStatus,
+        McKessonScenario,
+        build_mckesson_scenario,
+        upload_mckesson_rx,
+        upload_mckesson_scenario,
+        delete_mckesson_rx,
+        MCKESSON_AVAILABLE_STATUSES,
     )
     HAS_BUILDER = True
 except ImportError as e:
@@ -144,6 +152,23 @@ STATUS_INFO = {
 # Statuses available in the dropdown (excludes non-testable ones)
 AVAILABLE_STATUSES = [s for s in RxStatus if s not in (RxStatus.RX_CROSS_STORE, RxStatus.RX_DELIVERED)] if HAS_BUILDER else []
 
+# McKesson status descriptions for UI
+MCKESSON_STATUS_INFO = {
+    McKessonStatus.READY_FOR_PICKUP: "Ready for pickup (IsReady=true, copay shown)",
+    McKessonStatus.IN_QUEUE: "Being filled — in queue (NotReadyReasonCode=1)",
+    McKessonStatus.REFILLABLE: "Available for refill — picked up > 5 days ago",
+    McKessonStatus.RX_PICKED_UP: "Recently picked up — within 5 days",
+    McKessonStatus.NOT_REFILLABLE_EXPIRED: "Rx expired — cannot refill",
+    McKessonStatus.NOT_REFILLABLE_NO_REFILLS: "No refills remaining",
+    McKessonStatus.CONTROLLED_SUBSTANCE: "CII controlled substance — no refills",
+    McKessonStatus.TOO_SOON: "Too soon to refill",
+    McKessonStatus.TRANSFERRED: "Rx transferred to another pharmacy",
+    McKessonStatus.DEACTIVATED: "Rx deactivated",
+} if HAS_BUILDER else {}
+
+# PMS Types supported
+PMS_TYPES = ["PDX", "McKesson"]
+
 SAVED_SCENARIOS_FILE = BASE_DIR / "saved_scenarios_builder.json"
 SAVED_STORES_FILE = BASE_DIR / "saved_stores.json"
 
@@ -159,8 +184,8 @@ class PMSIDataBuilderUI:
     def __init__(self, root):
         self.root = root
         self.root.title("PMSI Data Builder")
-        self.root.geometry("1100x750")
-        self.root.minsize(900, 600)
+        self.root.geometry("1100x820")
+        self.root.minsize(900, 700)
 
         # State
         self.current_step = 0
@@ -276,6 +301,9 @@ class PMSIDataBuilderUI:
         self.btn_back = ttk.Button(nav, text="← Back", command=self._go_back, width=14)
         self.btn_back.pack(side=LEFT)
 
+        self.btn_verify = ttk.Button(nav, text="🔍 Verify", command=self._verify_uploaded_data, width=14)
+        self.btn_verify.pack(side=LEFT, padx=10)
+
         self.btn_next = ttk.Button(nav, text="Next →", command=self._go_next, width=14)
         self.btn_next.pack(side=RIGHT)
 
@@ -313,6 +341,11 @@ class PMSIDataBuilderUI:
         # Update nav buttons
         self.btn_back.configure(state=DISABLED if step == 0 else NORMAL)
         self.btn_next.configure(text="🚀 Submit" if step == 2 else "Next →")
+        # Verify button only visible on review step and only after scenarios exist
+        if step == 2 and self.scenarios:
+            self.btn_verify.pack(side=LEFT, padx=10)
+        else:
+            self.btn_verify.pack_forget()
 
     def _go_back(self):
         if self.current_step > 0:
@@ -524,10 +557,11 @@ class PMSIDataBuilderUI:
 
     def _create_rx_card(self, idx: int, rx: dict):
         """Display a prescription as a card."""
-        card = ttk.LabelFrame(self._rx_list_frame, text=f"RX #{rx['rx_number']}", padding=8)
+        pms_type = rx.get("pms_type", "PDX")
+        card = ttk.LabelFrame(self._rx_list_frame, text=f"RX #{rx['rx_number']} ({pms_type})", padding=8)
         card.pack(fill=X, pady=4, padx=5)
 
-        status_name = rx["rx_status"].value if isinstance(rx["rx_status"], RxStatus) else rx["rx_status"]
+        status_name = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus)) else rx["rx_status"]
         info = f"{rx['drug_name']}  |  Status: {status_name}  |  Copay: ${rx.get('copay', 10.0):.2f}"
         ttk.Label(card, text=info, font=("Segoe UI", 10)).pack(side=LEFT)
 
@@ -548,7 +582,7 @@ class PMSIDataBuilderUI:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Prescription" if editing else "Add Prescription")
-        dialog.geometry("650x520")
+        dialog.geometry("650x580")
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -556,6 +590,15 @@ class PMSIDataBuilderUI:
         content.pack(fill=BOTH, expand=YES)
 
         fields = {}
+
+        # PMS Type selector
+        row = ttk.Frame(content)
+        row.pack(fill=X, pady=4)
+        ttk.Label(row, text="PMS Type: *", width=22, anchor=W).pack(side=LEFT)
+        pms_type_combo = ttk.Combobox(row, values=PMS_TYPES, state="readonly", width=16)
+        pms_type_combo.set(existing.get("pms_type", "PDX"))
+        pms_type_combo.pack(side=LEFT)
+        fields["pms_type"] = pms_type_combo
 
         # RX Number
         row = ttk.Frame(content)
@@ -574,15 +617,36 @@ class PMSIDataBuilderUI:
         status_values = [s.value for s in AVAILABLE_STATUSES]
         status_combo = ttk.Combobox(row, values=status_values, state="readonly", width=28)
         current_status = existing.get("rx_status", RxStatus.REFILLABLE)
-        status_combo.set(current_status.value if isinstance(current_status, RxStatus) else current_status)
+        if isinstance(current_status, RxStatus):
+            status_combo.set(current_status.value)
+        elif isinstance(current_status, McKessonStatus):
+            status_combo.set(current_status.value)
+        else:
+            status_combo.set(str(current_status))
         status_combo.pack(side=LEFT)
-        status_combo.bind("<<ComboboxSelected>>", lambda e: self._update_status_info(status_combo, info_label))
+        status_combo.bind("<<ComboboxSelected>>", lambda e: self._update_status_info_dynamic(pms_type_combo, status_combo, info_label))
         fields["rx_status"] = status_combo
 
         # Status info
         info_label = ttk.Label(content, text="", font=("Segoe UI", 9, "italic"), foreground="gray", wraplength=580)
         info_label.pack(fill=X, pady=(0, 8))
-        self._update_status_info(status_combo, info_label)
+
+        # Wire PMS type change to update status dropdown
+        def on_pms_type_change(event=None):
+            pms_type = pms_type_combo.get()
+            if pms_type == "McKesson":
+                new_values = [s.value for s in MCKESSON_AVAILABLE_STATUSES]
+                status_combo["values"] = new_values
+                status_combo.set(McKessonStatus.REFILLABLE.value)
+                drug_hint.configure(text="(no length limit)")
+            else:
+                new_values = [s.value for s in AVAILABLE_STATUSES]
+                status_combo["values"] = new_values
+                status_combo.set(RxStatus.REFILLABLE.value)
+                drug_hint.configure(text="(max 28 chars)")
+            self._update_status_info_dynamic(pms_type_combo, status_combo, info_label)
+
+        pms_type_combo.bind("<<ComboboxSelected>>", on_pms_type_change)
 
         # Drug name
         row = ttk.Frame(content)
@@ -591,7 +655,9 @@ class PMSIDataBuilderUI:
         drug_entry = ttk.Entry(row, width=30)
         drug_entry.insert(0, existing.get("drug_name", "LISINOPRIL 10MG TAB"))
         drug_entry.pack(side=LEFT)
-        ttk.Label(row, text="(max 28 chars)", foreground="gray", font=("Segoe UI", 8)).pack(side=LEFT, padx=8)
+        drug_hint = ttk.Label(row, text="(max 28 chars)" if existing.get("pms_type", "PDX") == "PDX" else "(no length limit)",
+                              foreground="gray", font=("Segoe UI", 8))
+        drug_hint.pack(side=LEFT, padx=8)
         fields["drug_name"] = drug_entry
 
         # Copay
@@ -639,15 +705,32 @@ class PMSIDataBuilderUI:
         sig_entry.pack(side=LEFT, fill=X, expand=YES)
         fields["sig_text"] = sig_entry
 
+        # Initialize status info display
+        self._update_status_info_dynamic(pms_type_combo, status_combo, info_label)
+
         # Buttons
         btn_frame = ttk.Frame(content)
         btn_frame.pack(fill=X, pady=(15, 0))
 
         def save():
+            pms_type = fields["pms_type"].get()
+            status_val = fields["rx_status"].get()
+
+            # Parse status based on PMS type
+            if pms_type == "McKesson":
+                rx_status = McKessonStatus(status_val)
+            else:
+                rx_status = RxStatus(status_val)
+
+            drug_name = fields["drug_name"].get().strip()
+            if pms_type == "PDX":
+                drug_name = drug_name[:28]
+
             rx_data = {
+                "pms_type": pms_type,
                 "rx_number": fields["rx_number"].get().strip() or str(random.randint(5610000, 5619999)),
-                "rx_status": RxStatus(fields["rx_status"].get()),
-                "drug_name": fields["drug_name"].get().strip()[:28],
+                "rx_status": rx_status,
+                "drug_name": drug_name,
                 "copay": float(fields["copay"].get() or "10.0"),
                 "days_supply": int(fields["days_supply"].get() or "30"),
                 "refills_remaining": int(fields["refills_remaining"].get() or "3"),
@@ -673,8 +756,22 @@ class PMSIDataBuilderUI:
     def _edit_rx_dialog(self, idx: int):
         self._add_rx_dialog(edit_idx=idx)
 
+    def _update_status_info_dynamic(self, pms_type_combo, status_combo, label):
+        """Update the info label based on PMS type and selected status."""
+        try:
+            pms_type = pms_type_combo.get()
+            status_val = status_combo.get()
+            if pms_type == "McKesson":
+                status = McKessonStatus(status_val)
+                label.configure(text=MCKESSON_STATUS_INFO.get(status, ""))
+            else:
+                status = RxStatus(status_val)
+                label.configure(text=STATUS_INFO.get(status, ""))
+        except (ValueError, KeyError):
+            label.configure(text="")
+
     def _update_status_info(self, combo, label):
-        """Update the info label when status changes."""
+        """Update the info label when status changes (legacy compat)."""
         try:
             status = RxStatus(combo.get())
             label.configure(text=STATUS_INFO.get(status, ""))
@@ -741,43 +838,68 @@ class PMSIDataBuilderUI:
             lines.append(f"      Refills: {rx.get('refills_remaining', 3)} remaining")
 
             # Show what the builder will produce
+            pms_type = rx.get("pms_type", "PDX")
             try:
-                scenario = build_scenario(
-                    rx_status=status,
-                    rx_number=rx["rx_number"],
-                    patient_first=self.patient_data.get("first_name", "STATUS"),
-                    patient_last=self.patient_data.get("last_name", "TESTPATIENT"),
-                    patient_phone=self.patient_data.get("phone", "5550561001"),
-                    patient_dob=self.patient_data.get("dob", "19850101"),
-                    drug_name=rx["drug_name"],
-                    store_number=self.patient_data.get("store_number", DEFAULT_STORE_NUMBER),
-                    client_id=int(self.patient_data.get("client_id", DEFAULT_CLIENT_ID)),
-                    store_id=int(self.patient_data.get("store_id", DEFAULT_STORE_ID)),
-                    store_npi=self.patient_data.get("store_npi", DEFAULT_STORE_NPI),
-                    copay=rx.get("copay", 10.0),
-                    days_supply=rx.get("days_supply", 30),
-                    refills_remaining=rx.get("refills_remaining", 3),
-                    authorized_refills=rx.get("authorized_refills", 5),
-                    include_p360=False,
-                )
-                lines.append(f"      ─── Will produce: ───")
-                lines.append(f"      RxResponse code:     {scenario.rx.rx_response_status_code:03d} ({scenario.rx.rx_response_status_description})")
-                lines.append(f"      StatusResponse code: {scenario.rx.status_code} ({scenario.rx.status_description})")
-                lines.append(f"      Drug schedule:       {scenario.rx.drug_schedule}")
-                lines.append(f"      Delivered days ago:  {scenario.rx.delivered_days_ago}")
-                if scenario.rx.reject_code:
-                    lines.append(f"      Reject code:         {scenario.rx.reject_code}")
-                if scenario.notes:
-                    lines.append(f"      Note: {scenario.notes}")
+                if pms_type == "McKesson":
+                    mck_scenario = build_mckesson_scenario(
+                        status=status,
+                        rx_number=rx["rx_number"],
+                        patient_first=self.patient_data.get("first_name", "TEST"),
+                        patient_last=self.patient_data.get("last_name", "MCKESSON"),
+                        drug_name=rx["drug_name"],
+                        store_number=self.patient_data.get("store_number", "125"),
+                        include_p360=False,
+                    )
+                    lines.append(f"      ─── Will produce (McKesson/PerSe): ───")
+                    lines.append(f"      IsReady:        {mck_scenario.rx.is_ready}")
+                    lines.append(f"      IsRefillable:   {mck_scenario.rx.is_refillable}")
+                    if mck_scenario.rx.not_ready_reason_code:
+                        lines.append(f"      NotReadyCode:   {mck_scenario.rx.not_ready_reason_code}")
+                    if mck_scenario.rx.not_refillable_reason_code:
+                        lines.append(f"      NotRefillCode:  {mck_scenario.rx.not_refillable_reason_code}")
+                    lines.append(f"      DEA Class:      {mck_scenario.rx.dea_class}")
+                else:
+                    scenario = build_scenario(
+                        rx_status=status,
+                        rx_number=rx["rx_number"],
+                        patient_first=self.patient_data.get("first_name", "STATUS"),
+                        patient_last=self.patient_data.get("last_name", "TESTPATIENT"),
+                        patient_phone=self.patient_data.get("phone", "5550561001"),
+                        patient_dob=self.patient_data.get("dob", "19850101"),
+                        drug_name=rx["drug_name"],
+                        store_number=self.patient_data.get("store_number", DEFAULT_STORE_NUMBER),
+                        client_id=int(self.patient_data.get("client_id", DEFAULT_CLIENT_ID)),
+                        store_id=int(self.patient_data.get("store_id", DEFAULT_STORE_ID)),
+                        store_npi=self.patient_data.get("store_npi", DEFAULT_STORE_NPI),
+                        copay=rx.get("copay", 10.0),
+                        days_supply=rx.get("days_supply", 30),
+                        refills_remaining=rx.get("refills_remaining", 3),
+                        authorized_refills=rx.get("authorized_refills", 5),
+                        include_p360=False,
+                    )
+                    lines.append(f"      ─── Will produce: ───")
+                    lines.append(f"      RxResponse code:     {scenario.rx.rx_response_status_code:03d} ({scenario.rx.rx_response_status_description})")
+                    lines.append(f"      StatusResponse code: {scenario.rx.status_code} ({scenario.rx.status_description})")
+                    lines.append(f"      Drug schedule:       {scenario.rx.drug_schedule}")
+                    lines.append(f"      Delivered days ago:  {scenario.rx.delivered_days_ago}")
+                    if scenario.rx.reject_code:
+                        lines.append(f"      Reject code:         {scenario.rx.reject_code}")
+                    if scenario.notes:
+                        lines.append(f"      Note: {scenario.notes}")
             except ValueError as e:
                 lines.append(f"      ⚠️  {e}")
 
         lines.append("")
         lines.append(f"═══ FILES TO UPLOAD ═══")
         for rx in self.prescriptions:
-            lines.append(f"  PDX/RxResponse{rx['rx_number']}.xml")
-            lines.append(f"  PDX/StatusResponse{rx['rx_number']}.xml")
-            lines.append(f"  PDX/RefillResponse{rx['rx_number']}.xml")
+            pms_type = rx.get("pms_type", "PDX")
+            if pms_type == "McKesson":
+                lines.append(f"  PerSe/RxInfoRsp{rx['rx_number']}.xml")
+                lines.append(f"  PerSe/SubmitIVROrderRsp{rx['rx_number']}.xml")
+            else:
+                lines.append(f"  PDX/RxResponse{rx['rx_number']}.xml")
+                lines.append(f"  PDX/StatusResponse{rx['rx_number']}.xml")
+                lines.append(f"  PDX/RefillResponse{rx['rx_number']}.xml")
 
         if self.enable_p360.get() and HAS_P360:
             lines.append("")
@@ -800,36 +922,71 @@ class PMSIDataBuilderUI:
 
         for rx_data in self.prescriptions:
             try:
-                scenario = build_scenario(
-                    rx_status=rx_data["rx_status"],
-                    rx_number=rx_data["rx_number"],
-                    patient_first=self.patient_data.get("first_name", "STATUS"),
-                    patient_last=self.patient_data.get("last_name", "TESTPATIENT"),
-                    patient_phone=self.patient_data.get("phone", "5550561001"),
-                    patient_dob=self.patient_data.get("dob", "19850101"),
-                    drug_name=rx_data["drug_name"],
-                    store_number=self.patient_data.get("store_number", DEFAULT_STORE_NUMBER),
-                    client_id=int(self.patient_data.get("client_id", DEFAULT_CLIENT_ID)),
-                    store_id=int(self.patient_data.get("store_id", DEFAULT_STORE_ID)),
-                    store_npi=self.patient_data.get("store_npi", DEFAULT_STORE_NPI),
-                    copay=rx_data.get("copay", 10.0),
-                    days_supply=rx_data.get("days_supply", 30),
-                    refills_remaining=rx_data.get("refills_remaining", 3),
-                    authorized_refills=rx_data.get("authorized_refills", 5),
-                    include_p360=self.enable_p360.get() and HAS_P360,
-                    sig_text=rx_data.get("sig_text", "Take one tablet by mouth every day"),
-                )
+                pms_type = rx_data.get("pms_type", "PDX")
 
-                # Upload XML to simulator
-                upload_rx(scenario.rx)
-                results.append(f"✅ RX# {rx_data['rx_number']} → {rx_data['rx_status'].value}")
+                if pms_type == "McKesson":
+                    scenario = build_mckesson_scenario(
+                        status=rx_data["rx_status"],
+                        rx_number=rx_data["rx_number"],
+                        patient_first=self.patient_data.get("first_name", "TEST"),
+                        patient_last=self.patient_data.get("last_name", "MCKESSON"),
+                        patient_phone=self.patient_data.get("phone", "555-234-5678"),
+                        patient_dob=self.patient_data.get("dob", "1975-08-22"),
+                        drug_name=rx_data["drug_name"],
+                        store_number=self.patient_data.get("store_number", "125"),
+                        client_id=int(self.patient_data.get("client_id", DEFAULT_CLIENT_ID)),
+                        store_id=int(self.patient_data.get("store_id", DEFAULT_STORE_ID)),
+                        store_npi=self.patient_data.get("store_npi", DEFAULT_STORE_NPI),
+                        copay=str(rx_data.get("copay", "25")),
+                        days_supply=rx_data.get("days_supply", 30),
+                        refills_remaining=str(rx_data.get("refills_remaining", 3)),
+                        refills_authorized=str(rx_data.get("authorized_refills", 5)),
+                        include_p360=self.enable_p360.get() and HAS_P360,
+                    )
 
-                # Upload P360 if enabled
-                if self.enable_p360.get() and HAS_P360 and scenario.p360_patient:
-                    ensure_patient_with_rx(scenario.p360_patient)
-                    results.append(f"   ✅ P360 prescription merged")
+                    # Upload to simulator
+                    upload_mckesson_scenario(scenario, upload_p360=False)
+                    results.append(f"✅ RX# {rx_data['rx_number']} → {rx_data['rx_status'].value} (McKesson)")
 
-                self.scenarios.append(scenario)
+                    # Upload P360 if enabled
+                    if self.enable_p360.get() and HAS_P360 and scenario.p360_patient:
+                        ensure_patient_with_rx(scenario.p360_patient)
+                        results.append(f"   ✅ P360 prescription merged")
+
+                    self.scenarios.append(scenario)
+
+                else:
+                    # PDX (original behavior)
+                    scenario = build_scenario(
+                        rx_status=rx_data["rx_status"],
+                        rx_number=rx_data["rx_number"],
+                        patient_first=self.patient_data.get("first_name", "STATUS"),
+                        patient_last=self.patient_data.get("last_name", "TESTPATIENT"),
+                        patient_phone=self.patient_data.get("phone", "5550561001"),
+                        patient_dob=self.patient_data.get("dob", "19850101"),
+                        drug_name=rx_data["drug_name"],
+                        store_number=self.patient_data.get("store_number", DEFAULT_STORE_NUMBER),
+                        client_id=int(self.patient_data.get("client_id", DEFAULT_CLIENT_ID)),
+                        store_id=int(self.patient_data.get("store_id", DEFAULT_STORE_ID)),
+                        store_npi=self.patient_data.get("store_npi", DEFAULT_STORE_NPI),
+                        copay=rx_data.get("copay", 10.0),
+                        days_supply=rx_data.get("days_supply", 30),
+                        refills_remaining=rx_data.get("refills_remaining", 3),
+                        authorized_refills=rx_data.get("authorized_refills", 5),
+                        include_p360=self.enable_p360.get() and HAS_P360,
+                        sig_text=rx_data.get("sig_text", "Take one tablet by mouth every day"),
+                    )
+
+                    # Upload XML to simulator
+                    upload_rx(scenario.rx)
+                    results.append(f"✅ RX# {rx_data['rx_number']} → {rx_data['rx_status'].value}")
+
+                    # Upload P360 if enabled
+                    if self.enable_p360.get() and HAS_P360 and scenario.p360_patient:
+                        ensure_patient_with_rx(scenario.p360_patient)
+                        results.append(f"   ✅ P360 prescription merged")
+
+                    self.scenarios.append(scenario)
 
             except Exception as e:
                 errors.append(f"❌ RX# {rx_data['rx_number']}: {e}")
@@ -848,6 +1005,10 @@ class PMSIDataBuilderUI:
                 f"All {len(self.prescriptions)} prescription(s) uploaded!\n\n{msg}",
             )
 
+        # Show verify button now that data is uploaded
+        if results:
+            self.btn_verify.pack(side=LEFT, padx=10)
+
         # Ask to reset
         if results and messagebox.askyesno("Continue?", "Create another patient?"):
             self._reset()
@@ -858,6 +1019,75 @@ class PMSIDataBuilderUI:
         self.prescriptions = []
         self.scenarios = []
         self._show_step(0)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Verify — call pms-services to confirm data resolves correctly
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _verify_uploaded_data(self):
+        """Verify all uploaded Rx data by calling pms-services."""
+        if not self.prescriptions:
+            messagebox.showinfo("Nothing to Verify", "No prescriptions to verify.")
+            return
+
+        import httpx
+
+        # Determine pms-services URL based on environment
+        if self.current_environment == "Staging":
+            pms_svc_url = "https://pms-services.pc.s.awscloud.private/cxf/api/pms"
+        else:
+            pms_svc_url = "https://pms-services.pc.q.awscloud.private/cxf/api/pms"
+
+        token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJPTUNMIiwiZXhwIjo0NzQ3ODMyMjY0MTg5LCJpYXQiOjE1OTQyMzIyNjQxOTQsImp0aSI6IjVjMWNkMWUwLTJjYmEtNGJkZi05OWE5LTljMDgxZWI3OTk2NCIsInByaW5jaXBhbCI6eyJpZCI6InN1cGVyYWRtaW4taHIiLCJlbWFpbCI6InN1cGVyYWRtaW4taHJAYXRlYi5jb20iLCJyb2xlcyI6W3siZG9tYWluIjoiUE1BUCIsIm5hbWUiOiJPTUNMX1NVUEVSIn0seyJkb21haW4iOiJIUiIsIm5hbWUiOiJDQU1QQUlHTl9NQU5BR0VSIn0seyJkb21haW4iOiJvcGU6Y2xpZW50SWQ6KjpzdG9yZUlkOioiLCJuYW1lIjoiQ0xJRU5UX1NUT1JFIn0seyJkb21haW4iOiJQTUFQIiwibmFtZSI6IlVTRVIifSx7ImRvbWFpbiI6IlVTRVJfVFlQRSIsIm5hbWUiOiJvcGU6T0JDQVRFQlNVUFBPUlQifV19fQ.DOvS7TtHdFeWmFrVTH5bpjbETTzufO76yQ5d2xCMGTLWKCbcIegi1dKDyPv-crlJtNcz5B5Pazd8JZU__cSAy20HNvz73sqgGr36m8f2DIPdjaLUQpOhT6bMSu18CgXewdXwM1mmlijMRRItjGsn1HsvLZA4-j5Qcz5JDeXLXKVagTPVxCH2OnxAmfd1PHCA1LhEQt5hDVqZ4LFEbKJGa4oCS_epTxVc6gZgYT18I0jE73FHDRvff8Iuugh-1auS8XBJjvAguRawmCRmnrvD-XvALUeTeoXOgDqN8y2reqTk4QF7ocjT22Pug8BLNPWeZk8d6xOeFY7AGHmqBngHOg"
+
+        client_id = self.patient_data.get("client_id", str(DEFAULT_CLIENT_ID))
+        store_number = self.patient_data.get("store_number", DEFAULT_STORE_NUMBER)
+
+        results = []
+        with httpx.Client(verify=False, timeout=15.0) as client:
+            for rx_data in self.prescriptions:
+                rx_num = rx_data["rx_number"]
+                url = (
+                    f"{pms_svc_url}/v2/clients/{client_id}/rxs/{rx_num}"
+                    f"?requestSource=IVR&requestType=INFO&storeId={store_number}"
+                    f"&storeTzOffset=-04%3A00"
+                )
+                try:
+                    resp = client.get(url, headers={"Authorization": f"Bearer {token}"})
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        rx_status = data.get("rx", {}).get("rxStatus", "???")
+                        refill_status = data.get("rx", {}).get("refillStatus", "???")
+                        drug = data.get("drug", {}).get("drugName", "???")
+                        patient = data.get("patient", {}).get("name", {})
+                        pat_name = f"{patient.get('first', '')} {patient.get('last', '')}"
+                        results.append(
+                            f"✅ RX# {rx_num}\n"
+                            f"   rxStatus: {rx_status}  |  refillStatus: {refill_status}\n"
+                            f"   Drug: {drug}  |  Patient: {pat_name}"
+                        )
+                    else:
+                        results.append(f"❌ RX# {rx_num}: HTTP {resp.status_code}\n   {resp.text[:150]}")
+                except Exception as e:
+                    results.append(f"❌ RX# {rx_num}: {e}")
+
+        # Show in a dialog
+        verify_dialog = tk.Toplevel(self.root)
+        verify_dialog.title("Verification Results")
+        verify_dialog.geometry("700x400")
+        verify_dialog.transient(self.root)
+        # Center on parent
+        verify_dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 700) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 400) // 2
+        verify_dialog.geometry(f"700x400+{x}+{max(y, 50)}")
+
+        text = scrolledtext.ScrolledText(verify_dialog, wrap=tk.WORD, font=("Consolas", 10))
+        text.pack(fill=BOTH, expand=YES, padx=10, pady=10)
+        text.insert("1.0", "\n\n".join(results))
+        text.configure(state=DISABLED)
+
+        ttk.Button(verify_dialog, text="Close", command=verify_dialog.destroy).pack(pady=5)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Scenario Save/Load
@@ -873,7 +1103,7 @@ class PMSIDataBuilderUI:
         serialized_rxs = []
         for rx in self.prescriptions:
             rx_copy = dict(rx)
-            rx_copy["rx_status"] = rx["rx_status"].value if isinstance(rx["rx_status"], RxStatus) else rx["rx_status"]
+            rx_copy["rx_status"] = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus)) else rx["rx_status"]
             serialized_rxs.append(rx_copy)
 
         scenario_data = {

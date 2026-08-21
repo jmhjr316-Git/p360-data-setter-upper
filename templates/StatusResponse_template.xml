@@ -18,6 +18,7 @@
             <number>{{rx_number}}</number>
             <rxStatusCode>{{rx_status_code}}</rxStatusCode>
             <rxStatusDescription>{{rx_status_description}}</rxStatusDescription>
+            {{reject_code_block}}
             <promiseDateTime>{{last_fill_date}}T00:32:17.289</promiseDateTime>
             <deliveredDaysAgo>10</deliveredDaysAgo>
             <shipperName>FEDEX</shipperName>

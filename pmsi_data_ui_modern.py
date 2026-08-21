@@ -879,7 +879,8 @@ class ModernPMSIUI:
             "rx_status_code": status_mapping["rx_status_code"],
             "rx_status_description": status_mapping["rx_status_description"],
             "refills_remaining": status_mapping["refills_remaining"],
-            "remaining_quantity": status_mapping["remaining_quantity"]
+            "remaining_quantity": status_mapping["remaining_quantity"],
+            "reject_code_block": status_mapping.get("reject_code_block", "")
         }
         
         # Handle date logic based on scenario
@@ -910,7 +911,7 @@ class ModernPMSIUI:
     def upload_file_to_simulator(self, file_path: str, content: str) -> bool:
         """Upload a single file to the PMSI simulator via API"""
         try:
-            url = f"{self.api_base_url}/pms-manage"
+            url = f"{self.api_base_url}/FsiXmlSimulator/manage.jsp"
             params = {
                 "action": "write",
                 "file_path": file_path,
@@ -1076,17 +1077,17 @@ class ModernPMSIUI:
     def map_rx_status_to_docdb(self, rx_status: str) -> str:
         """Map UI RX status to DocumentDB format"""
         status_mapping = {
-            "Active": "ACTIVE",
-            "Inactive": "INACTIVE", 
-            "Pending": "PENDING",
-            "Expired": "EXPIRED",
-            "In Queue": "IN_QUEUE",
-            "Ready for Pickup": "READY",
+            "Active": "OPEN",
+            "Inactive": "DEACTIVATED", 
+            "Pending": "HOLD / ON FILE",
+            "Expired": "OPEN",
+            "In Queue": "FILLED",
+            "Ready for Pickup": "FILLED",
             "Picked Up": "SOLD",
-            "Shipped": "SHIPPED",
-            "Out of Refills": "NO_REFILLS"
+            "Shipped": "SOLD",
+            "Out of Refills": "SOLD"
         }
-        return status_mapping.get(rx_status, "ACTIVE")
+        return status_mapping.get(rx_status, "OPEN")
     
     def save_docdb_entry_locally(self, patient_doc: Dict):
         """Save DocumentDB entry locally for reference"""
@@ -1112,7 +1113,7 @@ class ModernPMSIUI:
     def test_api_connection(self):
         """Test API connectivity with simple list operation"""
         try:
-            url = f"{self.api_base_url}/pms-manage"
+            url = f"{self.api_base_url}/FsiXmlSimulator/manage.jsp"
             params = {
                 "action": "list",
                 "file_path": "PDX"

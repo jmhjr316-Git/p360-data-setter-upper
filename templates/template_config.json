@@ -7,24 +7,27 @@
       "rx_status_description": "000 = Rx Accepted",
       "refills_remaining": "5",
       "remaining_quantity": "100.0",
+      "reject_code_block": "",
       "date_logic": "future_expiration"
     },
     "Inactive": {
       "refillable": "N",
       "prescription_status": "I",
-      "rx_status_code": "509",
-      "rx_status_description": "509 = Not Found",
+      "rx_status_code": "000",
+      "rx_status_description": "000 = Rx Accepted",
       "refills_remaining": "0",
       "remaining_quantity": "0.0",
+      "reject_code_block": "<rejectCodeGroup><rejectCode><code>509</code></rejectCode></rejectCodeGroup>",
       "date_logic": "past_expiration"
     },
     "Pending": {
       "refillable": "N",
       "prescription_status": "P",
       "rx_status_code": "200",
-      "rx_status_description": "200 = Waiting for Prescriber",
+      "rx_status_description": "200 = Waiting for Call Prescriber exception",
       "refills_remaining": "5",
       "remaining_quantity": "100.0",
+      "reject_code_block": "",
       "date_logic": "future_expiration"
     },
     "Expired": {
@@ -34,24 +37,27 @@
       "rx_status_description": "207 = Picked up",
       "refills_remaining": "5",
       "remaining_quantity": "100.0",
+      "reject_code_block": "",
       "date_logic": "past_expiration"
     },
     "In Queue": {
       "refillable": "Y",
       "prescription_status": "A",
       "rx_status_code": "204",
-      "rx_status_description": "204 = In Queue",
+      "rx_status_description": "204 = Being filled",
       "refills_remaining": "5",
       "remaining_quantity": "100.0",
+      "reject_code_block": "",
       "date_logic": "recent_fill"
     },
     "Ready for Pickup": {
       "refillable": "Y",
       "prescription_status": "A",
       "rx_status_code": "206",
-      "rx_status_description": "206 = Ready for Pickup",
+      "rx_status_description": "206 = Filled, waiting for pickup",
       "refills_remaining": "4",
       "remaining_quantity": "89.0",
+      "reject_code_block": "",
       "date_logic": "within_5_days"
     },
     "Picked Up": {
@@ -61,6 +67,7 @@
       "rx_status_description": "207 = Picked up",
       "refills_remaining": "4",
       "remaining_quantity": "89.0",
+      "reject_code_block": "",
       "date_logic": "recent_pickup"
     },
     "Shipped": {
@@ -70,6 +77,7 @@
       "rx_status_description": "208 = Shipped",
       "refills_remaining": "4",
       "remaining_quantity": "89.0",
+      "reject_code_block": "",
       "date_logic": "recent_ship"
     },
     "Out of Refills": {
@@ -79,8 +87,53 @@
       "rx_status_description": "207 = Picked up",
       "refills_remaining": "0",
       "remaining_quantity": "0.0",
+      "reject_code_block": "",
       "date_logic": "out_of_refills"
+    },
+    "Not Refillable": {
+      "refillable": "N",
+      "prescription_status": "A",
+      "rx_status_code": "000",
+      "rx_status_description": "000 = Rx Accepted",
+      "refills_remaining": "0",
+      "remaining_quantity": "50.0",
+      "reject_code_block": "<rejectCodeGroup><rejectCode><code>513</code></rejectCode></rejectCodeGroup>",
+      "date_logic": "future_expiration"
+    },
+    "Transferred": {
+      "refillable": "N",
+      "prescription_status": "T",
+      "rx_status_code": "000",
+      "rx_status_description": "000 = Rx Accepted",
+      "refills_remaining": "0",
+      "remaining_quantity": "0.0",
+      "reject_code_block": "<rejectCodeGroup><rejectCode><code>506</code></rejectCode></rejectCodeGroup>",
+      "date_logic": "past_expiration"
+    },
+    "Deactivated": {
+      "refillable": "N",
+      "prescription_status": "D",
+      "rx_status_code": "000",
+      "rx_status_description": "000 = Rx Accepted",
+      "refills_remaining": "0",
+      "remaining_quantity": "0.0",
+      "reject_code_block": "<rejectCodeGroup><rejectCode><code>507</code></rejectCode></rejectCodeGroup>",
+      "date_logic": "past_expiration"
     }
+  },
+  "rx_status_descriptions_xsd": {
+    "_comment": "These are the ONLY valid values for rxStatusDescription per EPS_ATEB_IVR.xsd",
+    "000": "000 = Rx Accepted",
+    "050": "050 = Rx Accepted; AutoFill Accepted",
+    "200": "200 = Waiting for Call Prescriber exception",
+    "204": "204 = Being filled",
+    "205": "205 = RESERVED - Not Used",
+    "206": "206 = Filled, waiting for pickup",
+    "207": "207 = Picked up",
+    "208": "208 = Shipped",
+    "209": "209 = Never filled",
+    "900": "900 = Rx Rejected",
+    "950": "950 = Rx Rejected; AutoFill Rejected"
   },
   "required_files": [
     {
@@ -88,7 +141,7 @@
       "output_pattern": "RefillResponse{rx_number}.xml"
     },
     {
-      "template": "RxResponse_template.xml", 
+      "template": "RxResponse_template.xml",
       "output_pattern": "RxResponse{rx_number}.xml"
     },
     {
@@ -102,7 +155,7 @@
     "promise_datetime": "Current date + 2 days",
     "pmsi_store_id": "From form data",
     "patient_first_name": "From form data",
-    "patient_last_name": "From form data", 
+    "patient_last_name": "From form data",
     "patient_dob": "From form data",
     "patient_phone": "From form data",
     "medication_name": "From form data",
@@ -116,6 +169,7 @@
     "rx_status_code": "Based on rx_status mapping",
     "rx_status_description": "Based on rx_status mapping",
     "refills_remaining": "Based on rx_status mapping",
-    "remaining_quantity": "Based on rx_status mapping"
+    "remaining_quantity": "Based on rx_status mapping",
+    "reject_code_block": "XML block for reject codes (empty string if none)"
   }
 }
