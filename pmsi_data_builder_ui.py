@@ -436,6 +436,15 @@ class PMSIDataBuilderUI:
             entry.insert(0, val)
             self._store_fields[key] = entry
 
+        # PMS Type selector (drives default in prescription dialog)
+        row = ttk.Frame(store_card)
+        row.pack(fill=X, pady=3)
+        ttk.Label(row, text="PMS Type:", width=28, anchor=W).pack(side=LEFT)
+        self._pms_type_store = ttk.Combobox(row, values=PMS_TYPES, state="readonly", width=16)
+        self._pms_type_store.set(self.patient_data.get("pms_type", "PDX"))
+        self._pms_type_store.pack(side=LEFT)
+        ttk.Label(row, text="(defaults prescription PMS type)", foreground="gray", font=("Segoe UI", 8)).pack(side=LEFT, padx=8)
+
         # Save / Delete store buttons
         btn_frame = ttk.Frame(store_card)
         btn_frame.pack(fill=X, pady=(5, 2))
@@ -463,6 +472,9 @@ class PMSIDataBuilderUI:
                 return False
             self.patient_data[key] = val
 
+        # Save PMS type from store config
+        self.patient_data["pms_type"] = self._pms_type_store.get()
+
         return True
 
     def _on_store_selected(self, event=None):
@@ -472,6 +484,8 @@ class PMSIDataBuilderUI:
             for key, entry in self._store_fields.items():
                 entry.delete(0, END)
                 entry.insert(0, store.get(key, ""))
+            # Set PMS type from saved store
+            self._pms_type_store.set(store.get("pms_type", "PDX"))
 
     def _save_current_store(self):
         """Save the current store field values to saved_stores.json."""
@@ -482,6 +496,8 @@ class PMSIDataBuilderUI:
                 messagebox.showerror("Validation", f"Please fill in {key.replace('_', ' ').title()} before saving.")
                 return
             store_data[key] = val
+        # Include PMS type
+        store_data["pms_type"] = self._pms_type_store.get()
 
         # Check for duplicate (same client_id + store_number)
         label = f"{store_data['client_id']} / {store_data['store_number']}"
@@ -596,7 +612,7 @@ class PMSIDataBuilderUI:
         row.pack(fill=X, pady=4)
         ttk.Label(row, text="PMS Type: *", width=22, anchor=W).pack(side=LEFT)
         pms_type_combo = ttk.Combobox(row, values=PMS_TYPES, state="readonly", width=16)
-        pms_type_combo.set(existing.get("pms_type", "PDX"))
+        pms_type_combo.set(existing.get("pms_type", self.patient_data.get("pms_type", "PDX")))
         pms_type_combo.pack(side=LEFT)
         fields["pms_type"] = pms_type_combo
 
@@ -705,6 +721,9 @@ class PMSIDataBuilderUI:
         sig_entry.pack(side=LEFT, fill=X, expand=YES)
         fields["sig_text"] = sig_entry
 
+        # Initialize status dropdown based on PMS type (handles case where McKesson is defaulted from store)
+        if not editing:
+            on_pms_type_change()
         # Initialize status info display
         self._update_status_info_dynamic(pms_type_combo, status_combo, info_label)
 
