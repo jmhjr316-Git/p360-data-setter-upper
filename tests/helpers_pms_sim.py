@@ -2751,3 +2751,265 @@ def create_epic_waiting_for_prescriber(rx_number: str, **kwargs) -> EpicScenario
 
 # List of Epic statuses available for the UI
 EPIC_AVAILABLE_STATUSES = list(EpicStatus)
+
+
+# =============================================================================
+# PMS CONFIG MANAGEMENT (ateb DB)
+# =============================================================================
+# The ateb DB is ephemeral — it gets reseeded on deploys. These helpers ensure
+# the pms-services client/store/adapter config exists before tests run.
+# =============================================================================
+
+ATEB_DB_HOST = "ip-10-69-37-54.us-east-2.compute.internal"
+ATEB_DB_PORT = 30150
+ATEB_DB_NAME = "ateb"
+ATEB_DB_USER = "ateb"
+ATEB_DB_PASS = "ateb"
+
+# Adapter type IDs (from pms.adaptertype)
+ADAPTER_TYPE_IDS = {
+    "PDX": 3,       # PDXEPS
+    "McKesson": 6,  # MCKESSON
+    "Liberty": 7,   # LIBERTY
+    "Epic": 10,     # EPIC2018
+}
+
+# Connection configs: adapter → (connectionconfigid, url)
+CONNECTION_CONFIGS = {
+    "PDX": (11, "http://pmssim:8181/FsiXmlSimulator/PDXSimulatorServlet"),
+    "McKesson": (15, "http://pmssim:8181/FsiXmlSimulator/PerSeSimulatorServlet"),
+    "Liberty": (17, "http://ivr-mock-svcs:8080/libertypms"),
+    "Epic": (18, "http://ivr-mock-svcs:8080/epic/PharmacyServices2018/soap11"),
+}
+
+# Default store numbers per PMS type
+DEFAULT_PMS_STORES = {
+    "PDX": "70050001",
+    "McKesson": "125",
+    "Liberty": "8174884613",
+    "Epic": "9759001",
+}
+
+
+def _get_ateb_connection():
+    """Get a psycopg2 connection to the ateb DB."""
+    import psycopg2
+    return psycopg2.connect(
+        host=ATEB_DB_HOST,
+        port=ATEB_DB_PORT,
+        dbname=ATEB_DB_NAME,
+        user=ATEB_DB_USER,
+        password=ATEB_DB_PASS,
+    )
+
+
+def ensure_pms_config(
+    client_id: int,
+    pms_type: str,
+    store_id: str | None = None,
+) -> dict:
+    """Ensure pms-services config exists for a client/store/adapter combo.
+
+    Idempotent — checks if the config already exists before creating.
+    Also ensures the connectionconfig exists.
+
+    Args:
+        client_id: The client ID (e.g., 8000, 9001)
+        pms_type: One of "PDX", "McKesson", "Liberty", "Epic"
+        store_id: Store ID to configure. Defaults to DEFAULT_PMS_STORES[pms_type].
+
+    Returns:
+        dict with keys: clientconfigid, storeconfigid, connectionconfigid, store_id
+    """
+    if pms_type not in ADAPTER_TYPE_IDS:
+        raise ValueError(f"Unknown pms_type: {pms_type}. Must be one of: {list(ADAPTER_TYPE_IDS.keys())}")
+
+    adapter_type_id = ADAPTER_TYPE_IDS[pms_type]
+    conn_id, conn_url = CONNECTION_CONFIGS[pms_type]
+    if store_id is None:
+        store_id = DEFAULT_PMS_STORES[pms_type]
+
+    conn = _get_ateb_connection()
+    try:
+        with conn.cursor() as cur:
+            # 1. Ensure connectionconfig exists
+            cur.execute(
+                "SELECT connectionconfigid FROM pms.connectionconfig WHERE connectionconfigid = %s",
+                (conn_id,)
+            )
+            if not cur.fetchone():
+                cur.execute(
+                    "INSERT INTO pms.connectionconfig (connectionconfigid, url, communicationtypeid) "
+                    "VALUES (%s, %s, 2)",
+                    (conn_id, conn_url)
+                )
+
+            # 2. Ensure clientconfig exists
+            cur.execute(
+                "SELECT clientconfigid FROM pms.clientconfig "
+                "WHERE clientid = %s AND adaptertypeid = %s",
+                (client_id, adapter_type_id)
+            )
+            row = cur.fetchone()
+            if row:
+                client_config_id = row[0]
+            else:
+                cur.execute(
+                    "INSERT INTO pms.clientconfig (clientid, adaptertypeid, configstatusid) "
+                    "VALUES (%s, %s, 1) RETURNING clientconfigid",
+                    (client_id, adapter_type_id)
+                )
+                client_config_id = cur.fetchone()[0]
+
+            # 3. Ensure storeconfig exists
+            cur.execute(
+                "SELECT storeconfigid FROM pms.storeconfig "
+                "WHERE clientconfigid = %s AND storeid = %s",
+                (client_config_id, store_id)
+            )
+            row = cur.fetchone()
+            if row:
+                store_config_id = row[0]
+            else:
+                cur.execute(
+                    "INSERT INTO pms.storeconfig (clientconfigid, storeid, connectionconfigid) "
+                    "VALUES (%s, %s, %s) RETURNING storeconfigid",
+                    (client_config_id, store_id, conn_id)
+                )
+                store_config_id = cur.fetchone()[0]
+
+            conn.commit()
+
+        return {
+            "clientconfigid": client_config_id,
+            "storeconfigid": store_config_id,
+            "connectionconfigid": conn_id,
+            "store_id": store_id,
+        }
+    finally:
+        conn.close()
+
+
+def ensure_all_pms_configs(client_id: int) -> dict:
+    """Ensure all 4 PMS types are configured for a client.
+
+    Returns dict of pms_type → config info.
+    """
+    results = {}
+    for pms_type in ADAPTER_TYPE_IDS:
+        results[pms_type] = ensure_pms_config(client_id, pms_type)
+    return results
+
+
+# =============================================================================
+# CHANNEL CONFIG MANAGEMENT
+# =============================================================================
+
+CHANNELCONFIG_DB_HOST = "pcrdsqa.cxa8jqblcefj.us-east-2.rds.amazonaws.com"
+CHANNELCONFIG_DB_NAME = "channelconfig"
+CHANNELCONFIG_DB_USER = "channelconfig1"
+CHANNELCONFIG_DB_PASS = "channelconfig1"
+
+
+def _get_channelconfig_connection():
+    """Get a psycopg2 connection to the channelconfig DB."""
+    import psycopg2
+    return psycopg2.connect(
+        host=CHANNELCONFIG_DB_HOST,
+        port=5432,
+        dbname=CHANNELCONFIG_DB_NAME,
+        user=CHANNELCONFIG_DB_USER,
+        password=CHANNELCONFIG_DB_PASS,
+        sslmode="require",
+    )
+
+
+def set_channel_pms_store(
+    client_id: int,
+    store_number: str,
+    pms_type: str | None = None,
+    channel_id: int = 2,  # INBOUND_IVR
+) -> dict:
+    """Update the channel config's pmsStoreNumber (and optionally pmsType).
+
+    Args:
+        client_id: The client ID
+        store_number: The pmsStoreNumber value to set
+        pms_type: Optional — also set the pmsType field (e.g., "PDX", "McKesson", "Liberty", "Epic")
+        channel_id: Channel ID (2=INBOUND_IVR, 1=SMS, 4=OUTBOUND_IVR)
+
+    Returns:
+        dict with old and new values
+    """
+    conn = _get_channelconfig_connection()
+    try:
+        with conn.cursor() as cur:
+            # Get current values
+            cur.execute(
+                "SELECT channelconfigid, configuration->>'pmsStoreNumber' as store, "
+                "configuration->>'pmsType' as pms_type "
+                "FROM channelconfig.channelconfig "
+                "WHERE clientid = %s AND channelid = %s",
+                (client_id, channel_id)
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError(f"No channel config found for client {client_id}, channel {channel_id}")
+
+            old_store = row[1]
+            old_pms_type = row[2]
+
+            # Build update
+            update_obj = {"pmsStoreNumber": store_number}
+            if pms_type:
+                update_obj["pmsType"] = pms_type
+
+            import json
+            cur.execute(
+                "UPDATE channelconfig.channelconfig "
+                "SET configuration = configuration || %s::jsonb "
+                "WHERE clientid = %s AND channelid = %s",
+                (json.dumps(update_obj), client_id, channel_id)
+            )
+            conn.commit()
+
+        return {
+            "old_store": old_store,
+            "old_pms_type": old_pms_type,
+            "new_store": store_number,
+            "new_pms_type": pms_type or old_pms_type,
+        }
+    finally:
+        conn.close()
+
+
+def switch_pms_type(client_id: int, pms_type: str, channel_id: int = 2) -> dict:
+    """High-level: ensure ateb config exists AND point channel config to it.
+
+    This is the one-call solution for switching a client to a different PMS type.
+
+    Args:
+        client_id: The client ID
+        pms_type: One of "PDX", "McKesson", "Liberty", "Epic"
+        channel_id: Channel ID (default 2=INBOUND_IVR)
+
+    Returns:
+        dict with ateb config + channel config change details
+    """
+    # Ensure ateb has the config
+    ateb_config = ensure_pms_config(client_id, pms_type)
+
+    # Point channel config to the right store
+    channel_result = set_channel_pms_store(
+        client_id=client_id,
+        store_number=ateb_config["store_id"],
+        pms_type=pms_type,
+        channel_id=channel_id,
+    )
+
+    return {
+        "pms_type": pms_type,
+        "store_number": ateb_config["store_id"],
+        "ateb": ateb_config,
+        "channel_config": channel_result,
+    }
