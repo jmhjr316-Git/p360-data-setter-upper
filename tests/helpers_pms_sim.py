@@ -2197,3 +2197,557 @@ def create_liberty_on_hold(rx_number: str, **kwargs) -> LibertyScenario:
 
 # List of Liberty statuses available for the UI
 LIBERTY_AVAILABLE_STATUSES = list(LibertyStatus)
+
+
+# =============================================================================
+# EPIC 2018 PMS BUILDER
+# =============================================================================
+# Epic uses SOAP XML files served by WireMock (same host as Liberty).
+# Upload mechanism: PUT to WireMock admin API at /__admin/files/epic/2018/soap11/
+# Two files per Rx:
+#   - GetPrescriptionInfoResponse-{rxnum}-{ncpdpId}.xml (INFO)
+#   - RequestFillsResponse-{rxnum}-{ncpdpId}.xml (REFILL)
+# Note: Epic has mergeInfoStatus=false — only one INFO call, no separate STATUS.
+# =============================================================================
+
+
+class EpicStatus(str, Enum):
+    """Epic PMS statuses that the builder can produce."""
+    READY_FOR_PICKUP = "READY_FOR_PICKUP"
+    IN_QUEUE = "IN_QUEUE"
+    REFILLABLE = "REFILLABLE"
+    RX_PICKED_UP = "RX_PICKED_UP"
+    SHIPPED = "SHIPPED"
+    DELIVERED = "DELIVERED"
+    CONTROLLED_SUBSTANCE = "CONTROLLED_SUBSTANCE"
+    TOO_SOON = "TOO_SOON"
+    NOT_REFILLABLE = "NOT_REFILLABLE"
+    NOT_REFILLABLE_EXPIRED = "NOT_REFILLABLE_EXPIRED"
+    NOT_REFILLABLE_NO_REFILLS = "NOT_REFILLABLE_NO_REFILLS"
+    WAITING_FOR_PRESCRIBER = "WAITING_FOR_PRESCRIBER"
+    TRANSFERRED = "TRANSFERRED"
+
+
+@dataclass
+class EpicRx:
+    """Represents an Epic prescription with all fields needed for SOAP XML generation."""
+    rx_number: str
+    prescription_id: str = ""  # Internal Epic ID (defaults to rx_number)
+    ncpdp_id: str = "9759001"  # Pharmacy NCPDP ID (store)
+    patient_first: str = "STATUS"
+    patient_last: str = "TESTPATIENT"
+    patient_phone: str = "555-555-5555"
+    patient_dob: str = "1985-01-15"  # YYYY-MM-DD
+    drug_name: str = "lisinopril 10 MG tablet"
+    drug_ndc: str = "0591-0730-01"
+    dea_code: str = "CV"  # CI, CII, CIII, CIV, CV
+    dea_code_number: str = "5"  # 1-5
+    prescriber_name: str = "Jason Md (Ser) Fry, MD"
+    # Status flags
+    is_fillable: str = "true"
+    has_fill_in_progress: str = "false"
+    has_fill_ready_for_pickup: str = "false"
+    reason_not_fillable: str = "0"
+    reason_not_rarable: str = "0"
+    # Fill details
+    fill_status: str = "PendingFill"  # PendingFill, READY_TO_DISPENSE, DISPENSED, SHIPPED, DELIVERED
+    fill_day_supply: int = 30
+    fill_copay: str = "10.00"
+    fills_remaining: int = 11
+    # Dates
+    first_dispensed: str = ""
+    last_dispensed: str = ""
+    last_dispensed_day_supply: int = 30
+    dispensed_on: str = ""  # Fill.DispensedOn — xsi:nil if not dispensed
+    filled_on: str = ""
+    end_date: str = ""
+    sig: str = "Take by mouth."
+
+
+@dataclass
+class EpicScenario:
+    """A complete Epic test scenario including all XML content."""
+    rx: EpicRx
+    info_xml: str  # GetPrescriptionInfoResponse content
+    refill_xml: str  # RequestFillsResponse content
+    p360_patient: dict | None = None
+
+
+def build_epic_scenario(
+    status: EpicStatus,
+    rx_number: str,
+    ncpdp_id: str = "9759001",
+    patient_first: str = "STATUS",
+    patient_last: str = "TESTPATIENT",
+    patient_phone: str = "555-555-5555",
+    patient_dob: str = "19850115",
+    drug_name: str = "lisinopril 10 MG tablet",
+    drug_ndc: str = "0591-0730-01",
+    store_number: str = "9759001",
+    client_id: int = 9001,
+    copay: float = 10.0,
+    days_supply: int = 30,
+    refills_remaining: int = 11,
+    include_p360: bool = True,
+) -> EpicScenario:
+    """Build an Epic scenario that will resolve to the desired status."""
+    now = datetime.now()
+    dob_formatted = _normalize_dob_to_liberty(patient_dob)  # reuse YYYY-MM-DD normalizer
+
+    # Defaults
+    is_fillable = "true"
+    has_fill_in_progress = "false"
+    has_fill_ready_for_pickup = "false"
+    reason_not_fillable = "0"
+    reason_not_rarable = "0"
+    fill_status = "PendingFill"
+    dea_code = "CV"
+    dea_code_number = "5"
+    dispensed_on = ""  # xsi:nil when empty
+
+    if status == EpicStatus.READY_FOR_PICKUP:
+        has_fill_ready_for_pickup = "true"
+        fill_status = "READY_TO_DISPENSE"
+        filled_on = (now - timedelta(days=1)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+
+    elif status == EpicStatus.IN_QUEUE:
+        has_fill_in_progress = "true"
+        fill_status = "PendingFill"
+        filled_on = (now - timedelta(days=1)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+
+    elif status == EpicStatus.REFILLABLE:
+        # Fillable, dispensed long ago (> daysAfterPickup=5)
+        is_fillable = "true"
+        fill_status = "DISPENSED"
+        filled_on = (now - timedelta(days=days_supply + 10)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=days_supply + 8)).strftime("%Y-%m-%dT14:00:00")
+
+    elif status == EpicStatus.RX_PICKED_UP:
+        # Dispensed recently (≤ 5 days)
+        is_fillable = "true"
+        fill_status = "DISPENSED"
+        filled_on = (now - timedelta(days=2)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=1)).strftime("%Y-%m-%dT14:00:00")
+
+    elif status == EpicStatus.SHIPPED:
+        is_fillable = "true"
+        fill_status = "SHIPPED"
+        filled_on = (now - timedelta(days=3)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=2)).strftime("%Y-%m-%dT14:00:00")
+
+    elif status == EpicStatus.DELIVERED:
+        is_fillable = "true"
+        fill_status = "DELIVERED"
+        filled_on = (now - timedelta(days=3)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=1)).strftime("%Y-%m-%dT14:00:00")
+
+    elif status == EpicStatus.CONTROLLED_SUBSTANCE:
+        # Schedule II, otherwise fillable + dispensed long ago
+        is_fillable = "true"
+        fill_status = "DISPENSED"
+        dea_code = "CII"
+        dea_code_number = "2"
+        filled_on = (now - timedelta(days=days_supply + 10)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=days_supply + 8)).strftime("%Y-%m-%dT14:00:00")
+
+    elif status == EpicStatus.TOO_SOON:
+        # ReasonNotFillable=11 → TOO_SOON
+        is_fillable = "false"
+        reason_not_fillable = "11"
+        fill_status = "DISPENSED"
+        filled_on = (now - timedelta(days=2)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=1)).strftime("%Y-%m-%dT14:00:00")
+
+    elif status == EpicStatus.NOT_REFILLABLE:
+        # ReasonNotFillable=1 → NOT_REFILLABLE
+        is_fillable = "false"
+        reason_not_fillable = "1"
+        fill_status = "DISPENSED"
+        filled_on = (now - timedelta(days=30)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=29)).strftime("%Y-%m-%dT14:00:00")
+
+    elif status == EpicStatus.NOT_REFILLABLE_EXPIRED:
+        # ReasonNotFillable=10 → EXPIRED
+        is_fillable = "false"
+        reason_not_fillable = "10"
+        fill_status = "DISPENSED"
+        filled_on = (now - timedelta(days=365)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=364)).strftime("%Y-%m-%dT14:00:00")
+
+    elif status == EpicStatus.NOT_REFILLABLE_NO_REFILLS:
+        # ReasonNotFillable=7 → OUT_OF_REFILLS
+        is_fillable = "false"
+        reason_not_fillable = "7"
+        refills_remaining = 0
+        fill_status = "DISPENSED"
+        filled_on = (now - timedelta(days=30)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=29)).strftime("%Y-%m-%dT14:00:00")
+
+    elif status == EpicStatus.WAITING_FOR_PRESCRIBER:
+        # ReasonNotRARable=3 → WAITING_FOR_PRESCRIBER
+        is_fillable = "false"
+        reason_not_rarable = "3"
+        fill_status = "PendingFill"
+        filled_on = (now - timedelta(days=5)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+
+    elif status == EpicStatus.TRANSFERRED:
+        # ReasonNotRARable=9 → TRANSFERRED
+        is_fillable = "false"
+        reason_not_rarable = "9"
+        fill_status = "DISPENSED"
+        filled_on = (now - timedelta(days=60)).strftime("%Y-%m-%dT10:00:00")
+        last_dispensed = filled_on
+        dispensed_on = (now - timedelta(days=59)).strftime("%Y-%m-%dT14:00:00")
+
+    else:
+        raise ValueError(f"Unsupported Epic status: {status}")
+
+    first_dispensed = (now - timedelta(days=180)).strftime("%Y-%m-%dT10:00:00")
+    end_date = (now + timedelta(days=365)).strftime("%Y-%m-%dT00:00:00Z")
+
+    rx = EpicRx(
+        rx_number=rx_number,
+        prescription_id=rx_number,
+        ncpdp_id=ncpdp_id,
+        patient_first=patient_first,
+        patient_last=patient_last,
+        patient_phone=patient_phone,
+        patient_dob=f"{dob_formatted}T00:00:00Z",
+        drug_name=drug_name,
+        drug_ndc=drug_ndc,
+        dea_code=dea_code,
+        dea_code_number=dea_code_number,
+        prescriber_name="Jason Md (Ser) Fry, MD",
+        is_fillable=is_fillable,
+        has_fill_in_progress=has_fill_in_progress,
+        has_fill_ready_for_pickup=has_fill_ready_for_pickup,
+        reason_not_fillable=reason_not_fillable,
+        reason_not_rarable=reason_not_rarable,
+        fill_status=fill_status,
+        fill_day_supply=days_supply,
+        fill_copay=f"{copay:.2f}",
+        fills_remaining=refills_remaining,
+        first_dispensed=first_dispensed,
+        last_dispensed=last_dispensed,
+        last_dispensed_day_supply=days_supply,
+        dispensed_on=dispensed_on,
+        filled_on=filled_on,
+        end_date=end_date,
+        sig="Take by mouth.",
+    )
+
+    info_xml = _build_epic_info_xml(rx)
+    refill_xml = _build_epic_refill_xml(rx)
+
+    p360_patient = None
+    if include_p360:
+        p360_patient = _build_p360_patient(
+            patient_first=patient_first,
+            patient_last=patient_last,
+            patient_phone=patient_phone.replace("-", ""),
+            patient_dob=patient_dob,
+            rx_number=rx_number,
+            drug_name=drug_name,
+            days_supply=days_supply,
+            store_number=store_number,
+            client_id=client_id,
+        )
+
+    return EpicScenario(rx=rx, info_xml=info_xml, refill_xml=refill_xml, p360_patient=p360_patient)
+
+
+def _build_epic_info_xml(rx: EpicRx) -> str:
+    """Build the GetPrescriptionInfoResponse SOAP XML."""
+    dispensed_on_element = (
+        f'<web:DispensedOn>{rx.dispensed_on}</web:DispensedOn>'
+        if rx.dispensed_on
+        else '<web:DispensedOn xsi:nil="true"/>'
+    )
+
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:web="Epic.Clinical.Pharmacy.WebServices2018"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <soapenv:Header>
+        <web:Action soapenv:mustUnderstand="1"/>
+    </soapenv:Header>
+    <soapenv:Body>
+        <web:GetPrescriptionInfoResponse>
+            <web:GetPrescriptionInfoResult>
+                <web:Patient>
+                    <web:City>Testville</web:City>
+                    <web:Country>United States of America</web:Country>
+                    <web:CreditCards/>
+                    <web:CustomFields/>
+                    <web:DateOfBirth>{rx.patient_dob}</web:DateOfBirth>
+                    <web:DisplayName>{rx.patient_last}, {rx.patient_first}</web:DisplayName>
+                    <web:EmailAddress></web:EmailAddress>
+                    <web:EnterpriseId>E{rx.rx_number}</web:EnterpriseId>
+                    <web:FYIs xsi:nil="true"/>
+                    <web:FirstName>{rx.patient_first}</web:FirstName>
+                    <web:FullName>{rx.patient_first} {rx.patient_last}</web:FullName>
+                    <web:HomePhone>{rx.patient_phone}</web:HomePhone>
+                    <web:LastName>{rx.patient_last}</web:LastName>
+                    <web:MedicalRecordNumber>E{rx.rx_number}</web:MedicalRecordNumber>
+                    <web:MiddleName></web:MiddleName>
+                    <web:MobilePhone>{rx.patient_phone}</web:MobilePhone>
+                    <web:PatientType></web:PatientType>
+                    <web:PharmacyDocuments xsi:nil="true"/>
+                    <web:PreferredDeliveryMethod>Pickup</web:PreferredDeliveryMethod>
+                    <web:State>North Carolina</web:State>
+                    <web:StateAbbreviation>NC</web:StateAbbreviation>
+                    <web:StreetAddress>123 Test St</web:StreetAddress>
+                    <web:WorkPhone>{rx.patient_phone}</web:WorkPhone>
+                    <web:ZipCode>27601</web:ZipCode>
+                </web:Patient>
+                <web:Prescriptions>
+                    <web:Prescription>
+                        <web:AuthorizingProviderDisplayName>{rx.prescriber_name}</web:AuthorizingProviderDisplayName>
+                        <web:DEACode>{rx.dea_code}</web:DEACode>
+                        <web:DEACodeNumber>{rx.dea_code_number}</web:DEACodeNumber>
+                        <web:DEACodeTitle>C-{rx.dea_code_number}</web:DEACodeTitle>
+                        <web:Dose xsi:nil="true"/>
+                        <web:EndDate>{rx.end_date}</web:EndDate>
+                        <web:Fills>
+                            <web:Fill>
+                                <web:CreditCardPayments/>
+                                <web:CustomFields/>
+                                <web:DaySupply>{rx.fill_day_supply}</web:DaySupply>
+                                <web:DeliveryMethod>Pickup</web:DeliveryMethod>
+                                {dispensed_on_element}
+                                <web:DisplayName>{rx.fill_day_supply} tablet in containers</web:DisplayName>
+                                <web:FilledOn>{rx.filled_on}</web:FilledOn>
+                                <web:FillType>Fill</web:FillType>
+                                <web:Flags></web:Flags>
+                                <web:Id>{rx.prescription_id}01</web:Id>
+                                <web:IsCompletionFill>false</web:IsCompletionFill>
+                                <web:IsDispensable>false</web:IsDispensable>
+                                <web:IsFillInProgress>{rx.has_fill_in_progress}</web:IsFillInProgress>
+                                <web:IsPartialFill>false</web:IsPartialFill>
+                                <web:Ndc>{rx.drug_ndc}</web:Ndc>
+                                <web:PatientPayAmountDue>{rx.fill_copay}</web:PatientPayAmountDue>
+                                <web:PatientPayAmountTotal>{rx.fill_copay}</web:PatientPayAmountTotal>
+                                <web:PickupPharmacyDisplayName>TEST PHARMACY</web:PickupPharmacyDisplayName>
+                                <web:PickupPharmacyNCPDPId>{rx.ncpdp_id}</web:PickupPharmacyNCPDPId>
+                                <web:PrescriptionId>{rx.prescription_id}</web:PrescriptionId>
+                                <web:PrescriptionNumber>{rx.rx_number}</web:PrescriptionNumber>
+                                <web:Quantity>{rx.fill_day_supply} tablet</web:Quantity>
+                                <web:Status>{rx.fill_status}</web:Status>
+                                <web:TrackingNumber xsi:nil="true"/>
+                            </web:Fill>
+                        </web:Fills>
+                        <web:FillsRemaining>{rx.fills_remaining}</web:FillsRemaining>
+                        <web:FirstDispensed>{rx.first_dispensed}</web:FirstDispensed>
+                        <web:Flags></web:Flags>
+                        <web:Frequency xsi:nil="true"/>
+                        <web:HasFillInProgress>{rx.has_fill_in_progress}</web:HasFillInProgress>
+                        <web:HasFillReadyForPickup>{rx.has_fill_ready_for_pickup}</web:HasFillReadyForPickup>
+                        <web:Id>{rx.prescription_id}</web:Id>
+                        <web:IsEnrolledInAutoFill>false</web:IsEnrolledInAutoFill>
+                        <web:IsFillable>{rx.is_fillable}</web:IsFillable>
+                        <web:IsPartialFillRemaining>false</web:IsPartialFillRemaining>
+                        <web:IsRARable>false</web:IsRARable>
+                        <web:LastDispensed>{rx.last_dispensed}</web:LastDispensed>
+                        <web:LastDispensedDaySupply>{rx.last_dispensed_day_supply}</web:LastDispensedDaySupply>
+                        <web:Medication>{rx.drug_name}</web:Medication>
+                        <web:OrderingProviderDisplayName>{rx.prescriber_name}</web:OrderingProviderDisplayName>
+                        <web:OwningPharmacy>
+                            <web:AvailableDeliveryMethods>
+                                <web:DeliveryMethod>Pickup</web:DeliveryMethod>
+                            </web:AvailableDeliveryMethods>
+                            <web:DisplayName>TEST PHARMACY</web:DisplayName>
+                            <web:Id>8593</web:Id>
+                            <web:IsIntegrated>true</web:IsIntegrated>
+                            <web:NCPDPId>{rx.ncpdp_id}</web:NCPDPId>
+                        </web:OwningPharmacy>
+                        <web:PrescriptionNumber>{rx.rx_number}</web:PrescriptionNumber>
+                        <web:RARPrescriptionId xsi:nil="true"/>
+                        <web:RARPrescriptionNumber xsi:nil="true"/>
+                        <web:RARStatus xsi:nil="true"/>
+                        <web:ReasonNotFillable>{rx.reason_not_fillable}</web:ReasonNotFillable>
+                        <web:ReasonNotRARable>{rx.reason_not_rarable}</web:ReasonNotRARable>
+                        <web:Route>Oral</web:Route>
+                        <web:Sig>{rx.sig}</web:Sig>
+                        <web:StartDate>{rx.first_dispensed}</web:StartDate>
+                        <web:Status>Active</web:Status>
+                        <web:Timestamp>{rx.filled_on}</web:Timestamp>
+                    </web:Prescription>
+                </web:Prescriptions>
+            </web:GetPrescriptionInfoResult>
+        </web:GetPrescriptionInfoResponse>
+    </soapenv:Body>
+</soapenv:Envelope>'''
+
+
+def _build_epic_refill_xml(rx: EpicRx) -> str:
+    """Build the RequestFillsResponse SOAP XML (always success)."""
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:web="Epic.Clinical.Pharmacy.WebServices2018">
+    <soapenv:Header/>
+    <soapenv:Body>
+        <web:RequestFillsResponse>
+            <web:RequestFillsResult>
+                <web:ErrorCode>0</web:ErrorCode>
+                <web:ErrorMessage></web:ErrorMessage>
+                <web:PrescriptionsUpdated>1</web:PrescriptionsUpdated>
+                <web:UpdatePrescriptionResults>
+                    <web:UpdatePrescriptionResult>
+                        <web:ErrorCode>0</web:ErrorCode>
+                        <web:ErrorMessage></web:ErrorMessage>
+                        <web:FillId xsi:nil="true"
+                            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"></web:FillId>
+                        <web:PrescriptionId>{rx.prescription_id}</web:PrescriptionId>
+                        <web:UpdateTimestamp>{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}</web:UpdateTimestamp>
+                        <web:WasUpdated>true</web:WasUpdated>
+                    </web:UpdatePrescriptionResult>
+                </web:UpdatePrescriptionResults>
+            </web:RequestFillsResult>
+        </web:RequestFillsResponse>
+    </soapenv:Body>
+</soapenv:Envelope>'''
+
+
+def upload_epic_rx(rx_number: str, ncpdp_id: str, info_xml: str, refill_xml: str) -> None:
+    """Upload Epic XML files to WireMock via the admin files API."""
+    import requests
+
+    files_to_upload = [
+        (f"epic/2018/soap11/GetPrescriptionInfoResponse-{rx_number}-{ncpdp_id}.xml", info_xml),
+        (f"epic/2018/soap11/RequestFillsResponse-{rx_number}-{ncpdp_id}.xml", refill_xml),
+    ]
+
+    for file_path, content in files_to_upload:
+        url = f"{WIREMOCK_FILES_API}/{file_path}"
+        resp = requests.put(url, data=content.encode("utf-8"),
+                            headers={"Content-Type": "application/octet-stream"},
+                            verify=False, timeout=10)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(
+                f"Failed to upload {file_path}: HTTP {resp.status_code} — {resp.text}"
+            )
+
+
+def delete_epic_rx(rx_number: str, ncpdp_id: str = "9759001") -> None:
+    """Delete Epic XML files from WireMock."""
+    import requests
+
+    files_to_delete = [
+        f"epic/2018/soap11/GetPrescriptionInfoResponse-{rx_number}-{ncpdp_id}.xml",
+        f"epic/2018/soap11/RequestFillsResponse-{rx_number}-{ncpdp_id}.xml",
+    ]
+
+    for file_path in files_to_delete:
+        url = f"{WIREMOCK_FILES_API}/{file_path}"
+        resp = requests.delete(url, verify=False, timeout=10)
+        if resp.status_code not in (200, 204, 404):
+            raise RuntimeError(
+                f"Failed to delete {file_path}: HTTP {resp.status_code} — {resp.text}"
+            )
+
+
+def upload_epic_scenario(scenario: EpicScenario, upload_p360: bool = True) -> None:
+    """Upload all files for an Epic scenario."""
+    upload_epic_rx(
+        scenario.rx.rx_number,
+        scenario.rx.ncpdp_id,
+        scenario.info_xml,
+        scenario.refill_xml,
+    )
+    if upload_p360 and scenario.p360_patient:
+        _upsert_p360_patient(scenario.p360_patient)
+
+
+def delete_epic_scenario(scenario: EpicScenario, delete_p360: bool = False) -> None:
+    """Delete all files for an Epic scenario."""
+    delete_epic_rx(scenario.rx.rx_number, scenario.rx.ncpdp_id)
+    if delete_p360 and scenario.p360_patient:
+        _delete_p360_patient(scenario.p360_patient)
+
+
+# --- Epic convenience one-liners ---
+
+def create_epic_ready_for_pickup(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic READY_FOR_PICKUP scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.READY_FOR_PICKUP, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+def create_epic_in_queue(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic IN_QUEUE scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.IN_QUEUE, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+def create_epic_refillable(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic REFILLABLE scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.REFILLABLE, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+def create_epic_picked_up(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic RX_PICKED_UP scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.RX_PICKED_UP, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+def create_epic_shipped(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic SHIPPED scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.SHIPPED, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+def create_epic_controlled(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic CONTROLLED_SUBSTANCE scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.CONTROLLED_SUBSTANCE, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+def create_epic_too_soon(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic TOO_SOON scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.TOO_SOON, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+def create_epic_no_refills(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic NOT_REFILLABLE_NO_REFILLS scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.NOT_REFILLABLE_NO_REFILLS, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+def create_epic_expired(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic NOT_REFILLABLE_EXPIRED scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.NOT_REFILLABLE_EXPIRED, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+def create_epic_waiting_for_prescriber(rx_number: str, **kwargs) -> EpicScenario:
+    """Create and upload an Epic WAITING_FOR_PRESCRIBER scenario."""
+    scenario = build_epic_scenario(status=EpicStatus.WAITING_FOR_PRESCRIBER, rx_number=rx_number, **kwargs)
+    upload_epic_scenario(scenario)
+    return scenario
+
+
+# List of Epic statuses available for the UI
+EPIC_AVAILABLE_STATUSES = list(EpicStatus)
