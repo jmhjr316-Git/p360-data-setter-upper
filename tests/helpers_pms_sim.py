@@ -2773,6 +2773,7 @@ ADAPTER_TYPE_IDS = {
     "McKesson": 6,  # MCKESSON
     "Liberty": 7,   # LIBERTY
     "Epic": 10,     # EPIC2018
+    "AtebGen": 4,   # ATEBGEN100 / RX30 (socket via on-prem relay)
 }
 
 # Connection configs: adapter → (connectionconfigid, url, communicationtypeid, isdirect, host, port)
@@ -2782,6 +2783,7 @@ CONNECTION_CONFIGS = {
     "McKesson": (15, "http://pmssim:8181/FsiXmlSimulator/PerSeSimulatorServlet", 2, True, "notuse", 0),
     "Liberty": (17, "http://ivr-mock-svcs:8080/libertypms", 2, True, "", None),
     "Epic": (18, "http://ivr-mock-svcs:8080/epic/PharmacyServices2018/soap11", 4, True, "", None),
+    "AtebGen": (9, "", 1, True, "pmssim", 5143),  # isdirect=true → routes through pms-onprem relay
 }
 
 # Default store numbers per PMS type
@@ -2791,6 +2793,7 @@ DEFAULT_PMS_STORES = {
     "McKesson": "125",
     "Liberty": "8174884613",
     "Epic": "9759001",
+    "AtebGen": "02",
 }
 
 
@@ -3494,3 +3497,443 @@ def create_pdx275_controlled(rx_number: str, **kwargs) -> Pdx275Scenario:
 
 # List of PDX 275 statuses available for the UI
 PDX275_AVAILABLE_STATUSES = list(Pdx275Status)
+
+
+# =============================================================================
+# ATEBGEN100 (RX30) PMS BUILDER
+# =============================================================================
+# ATEBGEN100/RX30 uses fixed-width text records (socket sim on port 5143).
+# Very similar to PDX275 but different field positions and status codes.
+# Upload: append to or rewrite fsisimdata_atebgens via manage.jsp ?base=legacy
+# =============================================================================
+
+ATEBGEN_DATA_FILE = "fsisimdata_atebgens"
+
+
+class AtebGenStatus(str, Enum):
+    """ATEBGEN100 (RX30) statuses that the builder can produce."""
+    READY_FOR_PICKUP = "READY_FOR_PICKUP"
+    IN_QUEUE = "IN_QUEUE"
+    WAITING_FOR_PRESCRIBER = "WAITING_FOR_PRESCRIBER"
+    REFILLABLE = "REFILLABLE"
+    RX_PICKED_UP = "RX_PICKED_UP"
+    SHIPPED = "SHIPPED"
+    ON_HOLD = "ON_HOLD"
+    CONTROLLED_SUBSTANCE = "CONTROLLED_SUBSTANCE"
+    TOO_SOON = "TOO_SOON"
+    NOT_REFILLABLE_EXPIRED = "NOT_REFILLABLE_EXPIRED"
+    NOT_REFILLABLE_NO_REFILLS = "NOT_REFILLABLE_NO_REFILLS"
+    DEACTIVATED = "DEACTIVATED"
+
+
+@dataclass
+class AtebGenRx:
+    """Represents an ATEBGEN100 prescription with all fixed-width fields."""
+    rx_number: str
+    store_number: str = "01"
+    patient_first: str = "STATUS"
+    patient_last: str = "TESTPATIENT"
+    patient_phone: str = "5550561001"
+    patient_dob: str = "19850115"  # YYYYMMDD
+    drug_name: str = "LISINOPRIL 10MG TAB"
+    drug_ndc: str = "00591073101"
+    drug_schedule: str = " "  # space=non-controlled, other values for schedule
+    prescriber_first: str = "John"
+    prescriber_last: str = "Smith"
+    prescriber_phone: str = "5551234567"
+    # Rx details
+    refills_remaining: str = "003"  # 3-digit
+    expiration_date: str = ""  # YYYYMMDD
+    last_fill_date: str = ""  # YYYYMMDD
+    first_fill_date: str = ""  # YYYYMMDD
+    days_supply: str = "030"  # 3-digit
+    orig_refills: str = "005"  # 3-digit
+    last_fill_qty: str = "00030"  # 5-digit
+    qty_remaining: str = "00000"  # 5-digit
+    orig_fill_qty: str = "00030"  # 5-digit
+    copay: str = "  10.00"  # 7-char (last_fill_price)
+    # Status fields
+    qry_status: str = "F"  # F=OK, N=NotFound
+    qry_status_code: str = "Q00"  # Q00=normal, Q10=expired, Q11=no refills, Q12=too soon, Q14=narcotic, Q16=deactivated
+    chk_status: str = "F"  # F=OK, N=NotFound
+    chk_status_code: str = "C07"  # C00/C01=InQueue, C04=ReadyForPickup, C05=OnHold, C06=WaitingForPrescriber, C07=PickedUp
+    upd_status: str = "F"  # F=success
+    upd_status_code: str = "U00"  # U00=success
+
+
+@dataclass
+class AtebGenScenario:
+    """A complete ATEBGEN100 test scenario."""
+    rx: AtebGenRx
+    qry_block: str
+    upd_block: str
+    chk_block: str
+    p360_patient: dict | None = None
+
+
+def build_atebgen_scenario(
+    status: AtebGenStatus,
+    rx_number: str,
+    store_number: str = "01",
+    patient_first: str = "STATUS",
+    patient_last: str = "TESTPATIENT",
+    patient_phone: str = "5550561001",
+    patient_dob: str = "19850115",
+    drug_name: str = "LISINOPRIL 10MG TAB",
+    drug_ndc: str = "00591073101",
+    client_id: int = 9001,
+    copay: float = 10.0,
+    days_supply: int = 30,
+    refills_remaining: int = 3,
+    include_p360: bool = True,
+) -> AtebGenScenario:
+    """Build an ATEBGEN100 scenario that will resolve to the desired status."""
+    now = datetime.now()
+
+    # Defaults
+    qry_status = "F"
+    qry_status_code = "Q00"
+    chk_status = "F"
+    chk_status_code = "C07"  # PICKED_UP
+    drug_schedule = " "
+
+    if status == AtebGenStatus.READY_FOR_PICKUP:
+        chk_status_code = "C04"
+        fill_date = now - timedelta(days=1)
+
+    elif status == AtebGenStatus.IN_QUEUE:
+        chk_status_code = "C00"
+        fill_date = now - timedelta(days=1)
+
+    elif status == AtebGenStatus.WAITING_FOR_PRESCRIBER:
+        chk_status_code = "C06"
+        fill_date = now - timedelta(days=5)
+
+    elif status == AtebGenStatus.REFILLABLE:
+        chk_status_code = "C07"
+        fill_date = now - timedelta(days=days_supply + 10)
+
+    elif status == AtebGenStatus.RX_PICKED_UP:
+        chk_status_code = "C07"
+        fill_date = now - timedelta(days=2)
+
+    elif status == AtebGenStatus.SHIPPED:
+        chk_status_code = "C03"
+        fill_date = now - timedelta(days=3)
+
+    elif status == AtebGenStatus.ON_HOLD:
+        chk_status_code = "C05"
+        fill_date = now - timedelta(days=5)
+
+    elif status == AtebGenStatus.CONTROLLED_SUBSTANCE:
+        qry_status_code = "Q14"
+        chk_status_code = "C07"
+        drug_schedule = "2"
+        fill_date = now - timedelta(days=days_supply + 10)
+
+    elif status == AtebGenStatus.TOO_SOON:
+        qry_status_code = "Q12"
+        chk_status_code = "C07"
+        fill_date = now - timedelta(days=2)
+
+    elif status == AtebGenStatus.NOT_REFILLABLE_EXPIRED:
+        qry_status_code = "Q10"
+        chk_status_code = "C07"
+        fill_date = now - timedelta(days=365)
+
+    elif status == AtebGenStatus.NOT_REFILLABLE_NO_REFILLS:
+        qry_status_code = "Q11"
+        chk_status_code = "C07"
+        refills_remaining = 0
+        fill_date = now - timedelta(days=30)
+
+    elif status == AtebGenStatus.DEACTIVATED:
+        qry_status_code = "Q16"
+        chk_status_code = "C07"
+        fill_date = now - timedelta(days=30)
+
+    else:
+        raise ValueError(f"Unsupported AtebGen status: {status}")
+
+    exp_date = (now + timedelta(days=365)).strftime("%Y%m%d")
+    last_fill = fill_date.strftime("%Y%m%d")
+    first_fill = (fill_date - timedelta(days=180)).strftime("%Y%m%d")
+    copay_str = f"{copay:7.2f}"
+
+    rx = AtebGenRx(
+        rx_number=rx_number,
+        store_number=store_number,
+        patient_first=patient_first,
+        patient_last=patient_last,
+        patient_phone=patient_phone,
+        patient_dob=patient_dob,
+        drug_name=drug_name,
+        drug_ndc=drug_ndc,
+        drug_schedule=drug_schedule,
+        prescriber_first="John",
+        prescriber_last="Smith",
+        prescriber_phone="5551234567",
+        refills_remaining=f"{refills_remaining:03d}",
+        expiration_date=exp_date,
+        last_fill_date=last_fill,
+        first_fill_date=first_fill,
+        days_supply=f"{days_supply:03d}",
+        orig_refills=f"{refills_remaining + 2:03d}",
+        last_fill_qty=f"{days_supply:05d}",
+        qty_remaining=f"{'00000'}",
+        orig_fill_qty=f"{days_supply:05d}",
+        copay=copay_str,
+        qry_status=qry_status,
+        qry_status_code=qry_status_code,
+        chk_status=chk_status,
+        chk_status_code=chk_status_code,
+    )
+
+    qry_block = _build_atebgen_qry(rx)
+    upd_block = _build_atebgen_upd(rx)
+    chk_block = _build_atebgen_chk(rx)
+
+    p360_patient = None
+    if include_p360:
+        p360_patient = _build_p360_patient(
+            patient_first=patient_first,
+            patient_last=patient_last,
+            patient_phone=patient_phone,
+            patient_dob=patient_dob,
+            rx_number=rx_number,
+            drug_name=drug_name,
+            days_supply=days_supply,
+            store_number=store_number,
+            client_id=client_id,
+        )
+
+    return AtebGenScenario(rx=rx, qry_block=qry_block, upd_block=upd_block, chk_block=chk_block, p360_patient=p360_patient)
+
+
+def _build_atebgen_qry(rx: AtebGenRx) -> str:
+    """Build the QRY (INFO) record block for ATEBGEN100."""
+    # Header (26 chars): "99990000000100QR351       "
+    # bytecount(4) + version(10) + transaction_type(2) + store(10)
+    hdr = f"9999{'0000000100':10s}QR{'351':3s}{_ljust(rx.store_number, 7)}"
+
+    # Part 01 (15 chars): rx_number(11) + status(1) + status_code(3)
+    pt01 = f"{_ljust(rx.rx_number, 11)}{rx.qry_status}{rx.qry_status_code}"
+
+    # Part 02 (81 chars): reassign(11) + refills(3) + exp_date(8) + last_fill(8) + first_fill(8) +
+    #   days_supply(3) + orig_refills(3) + last_fill_qty(5) + qty_remaining(5) + next_fill(8) +
+    #   orig_fill_qty(5) + cur_fill_price(7) + last_fill_price(7)
+    pt02 = (
+        f"{_ljust('', 11)}"  # reassigned_rx
+        f"{rx.refills_remaining}"
+        f"{rx.expiration_date}"
+        f"{rx.last_fill_date}"
+        f"{rx.first_fill_date}"
+        f"{rx.days_supply}"
+        f"{rx.orig_refills}"
+        f"{rx.last_fill_qty}"
+        f"{rx.qty_remaining}"
+        f"{_ljust('', 8)}"  # next_fill_date
+        f"{rx.orig_fill_qty}"
+        f"{rx.copay}"  # cur_fill_price (7)
+        f"{rx.copay}"  # last_fill_price (7)
+    )
+
+    # Part 03 (11 chars): generated_rx_number
+    pt03 = _ljust("", 11)
+
+    # Part 04-06 (60 chars each): sig_text (180 total)
+    sig = "Take one tablet by mouth daily"
+    pt04 = _ljust(sig[:60], 60)
+    pt05 = _ljust(sig[60:120] if len(sig) > 60 else "", 60)
+    pt06 = _ljust(sig[120:180] if len(sig) > 120 else "", 60)
+
+    # Part 07 (74 chars): ssn(9) + customer_number(10) + last_name(15) + first_name(12) + dob(8) + phone1(10) + phone2(10)
+    pt07 = (
+        f"{_ljust('', 9)}"  # ssn
+        f"{_ljust('', 10)}"  # customer_number
+        f"{_ljust(rx.patient_last, 15)}"
+        f"{_ljust(rx.patient_first, 12)}"
+        f"{rx.patient_dob}"
+        f"{_ljust(rx.patient_phone, 10)}"
+        f"{_ljust('', 10)}"  # phone2
+    )
+
+    # Part 08 (105 chars): address1(30) + address2(30) + city(30) + state(4) + zip(9) + country(2)
+    pt08 = (
+        f"{_ljust('123 Test St', 30)}"
+        f"{_ljust('', 30)}"  # address2
+        f"{_ljust('Testville', 30)}"
+        f"{_ljust('NC', 4)}"
+        f"{_ljust('27601', 9)}"
+        f"{_ljust('', 2)}"  # country
+    )
+
+    # Parts 09-15 (58/57 chars each): credit card info — all blank
+    pt09 = _ljust("", 58)  # store_acct(1) + cc1(16+4+6+1+30)
+    pt10 = _ljust("", 57)  # cc2
+    pt11 = _ljust("", 57)  # cc3
+    pt12 = _ljust("", 57)  # cc4
+    pt13 = _ljust("", 57)  # cc5
+    pt14 = _ljust("", 57)  # cc6
+    pt15 = _ljust("", 57)  # cc7
+
+    # Part 16 (104 chars): drug_name(30) + ndc(11) + schedule(1) + manufacturer(35) + qty_onhand(6) + therapy(6) + strength(11) + form(4)
+    pt16 = (
+        f"{_ljust(rx.drug_name, 30)}"
+        f"{_ljust(rx.drug_ndc, 11)}"
+        f"{rx.drug_schedule}"
+        f"{_ljust('Generic Pharma', 35)}"
+        f"{_rjust('', 6, ' ')}"  # qty_on_hand
+        f"{_ljust('', 6)}"  # therapeutic_class
+        f"{_ljust('', 11)}"  # strength
+        f"{_ljust('', 4)}"  # form
+    )
+
+    # Part 17 (48 chars): doc_last(15) + doc_first(12) + doc_phone(10) + doc_fax(10) — wait that's 47
+    # Actually from the example: "Jackson        Michael     91955512759195551645" = 48 chars
+    pt17 = (
+        f"{_ljust(rx.prescriber_last, 15)}"
+        f"{_ljust(rx.prescriber_first, 12)}"
+        f"{_ljust(rx.prescriber_phone, 10)}"
+        f"{_ljust('5551234568', 10)}"  # fax
+    )
+
+    # Part 18 (105 chars): doc_address1(30) + doc_address2(30) + doc_city(30) + doc_state(4) + doc_zip(9) + need_contact(1) + pad
+    pt18 = (
+        f"{_ljust('456 Medical Dr', 30)}"
+        f"{_ljust('', 30)}"  # address2
+        f"{_ljust('Testville', 30)}"
+        f"{_ljust('NC', 4)}"
+        f"{_ljust('27601', 9)}"
+        f"N"  # need_to_contact_cust_serv
+    )
+
+    lines = [
+        f'QRY            FSIKEY={rx.rx_number}',
+        f'"{hdr}"',
+        f'"{pt01}"',
+        f'"{pt02}"',
+        f'"{pt03}"',
+        f'"{pt04}"',
+        f'"{pt05}"',
+        f'"{pt06}"',
+        f'"{pt07}"',
+        f'"{pt08}"',
+        f'"{pt09}"',
+        f'"{pt10}"',
+        f'"{pt11}"',
+        f'"{pt12}"',
+        f'"{pt13}"',
+        f'"{pt14}"',
+        f'"{pt15}"',
+        f'"{pt16}"',
+        f'"{pt17}"',
+        f'"{pt18}"',
+    ]
+    return "\n".join(lines)
+
+
+def _build_atebgen_upd(rx: AtebGenRx) -> str:
+    """Build the UPD (refill response) record block for ATEBGEN100."""
+    hdr = f"0051{'0000000100':10s}UR{'351':3s}{_ljust(rx.store_number, 7)}"
+    # body: rx_number(11) + status(1) + status_code(3) + order_number(10)
+    body = f"{_ljust(rx.rx_number, 11)}{rx.upd_status}{rx.upd_status_code}{_ljust('', 10)}"
+
+    lines = [
+        f'UPD            FSIKEY={rx.rx_number}',
+        f'"{hdr}"',
+        f'"{body}"',
+    ]
+    return "\n".join(lines)
+
+
+def _build_atebgen_chk(rx: AtebGenRx) -> str:
+    """Build the CHK (status check) record block for ATEBGEN100."""
+    hdr = f"0091{'0000000100':10s}SR{'351':3s}{_ljust(rx.store_number, 7)}"
+    # body: rx_number(11) + order_number(10) + status(1) + status_code(3) +
+    #   shipper_name(1) + tracking(30) + ship_date(8) + ship_method(1)
+    body = (
+        f"{_ljust(rx.rx_number, 11)}"
+        f"{_ljust('', 10)}"  # order_number
+        f"{rx.chk_status}"
+        f"{rx.chk_status_code}"
+        f"{_ljust('', 1)}"  # shipper_name
+        f"{_ljust('', 30)}"  # tracking
+        f"{_ljust('', 8)}"  # ship_date
+        f"{_ljust('', 1)}"  # ship_method
+    )
+
+    lines = [
+        f'CHK            FSIKEY={rx.rx_number}',
+        f'"{hdr}"',
+        f'"{body}"',
+    ]
+    return "\n".join(lines)
+
+
+def upload_atebgen_rx(scenario: AtebGenScenario) -> None:
+    """Upload an ATEBGEN100 rx by appending to the data file via manage.jsp."""
+    import requests
+    import urllib.parse
+
+    separator = "#" + "-" * 100
+    content = f"\n{scenario.qry_block}\n{separator}\n{scenario.chk_block}\n{separator}\n{scenario.upd_block}\n"
+
+    encoded = urllib.parse.quote(content)
+    url = f"{PDX275_SIM_URL}?action=append&base=legacy&file_path={ATEBGEN_DATA_FILE}&content={encoded}"
+    resp = requests.get(url, verify=False, timeout=10)
+    if resp.status_code != 200 or "success" not in resp.text:
+        raise RuntimeError(f"Failed to append ATEBGEN data: {resp.text}")
+
+
+def delete_atebgen_rx(rx_number: str) -> None:
+    """Remove an ATEBGEN100 rx from the data file."""
+    import requests
+
+    url = f"{PDX275_SIM_URL}?action=read&base=legacy&file_path={ATEBGEN_DATA_FILE}"
+    resp = requests.get(url, verify=False, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to read ATEBGEN file: {resp.status_code}")
+
+    lines = resp.text.split("\n")
+    filtered = []
+    skip = False
+    for line in lines:
+        if f"FSIKEY={rx_number}" in line:
+            skip = True
+            if filtered and filtered[-1].startswith("#---"):
+                filtered.pop()
+            continue
+        if skip:
+            if line.startswith(("QRY", "UPD", "CHK", "AFR", "AFL", "AFP")) and f"FSIKEY={rx_number}" not in line:
+                skip = False
+                filtered.append(line)
+            elif line.startswith("#---"):
+                skip = False
+                filtered.append(line)
+        else:
+            filtered.append(line)
+
+    new_content = "\n".join(filtered)
+    url = f"{PDX275_SIM_URL}?action=write&base=legacy&file_path={ATEBGEN_DATA_FILE}"
+    resp = requests.post(url, data={"content": new_content}, verify=False, timeout=30)
+    if resp.status_code != 200 or "success" not in resp.text:
+        raise RuntimeError(f"Failed to write ATEBGEN file: {resp.text}")
+
+
+def upload_atebgen_scenario(scenario: AtebGenScenario, upload_p360: bool = True) -> None:
+    """Upload all data for an ATEBGEN100 scenario."""
+    upload_atebgen_rx(scenario)
+    if upload_p360 and scenario.p360_patient:
+        _upsert_p360_patient(scenario.p360_patient)
+
+
+def delete_atebgen_scenario(scenario: AtebGenScenario, delete_p360: bool = False) -> None:
+    """Delete all data for an ATEBGEN100 scenario."""
+    delete_atebgen_rx(scenario.rx.rx_number)
+    if delete_p360 and scenario.p360_patient:
+        _delete_p360_patient(scenario.p360_patient)
+
+
+# List of ATEBGEN100 statuses available for the UI
+ATEBGEN_AVAILABLE_STATUSES = list(AtebGenStatus)
