@@ -116,6 +116,14 @@ try:
         upload_epic_scenario,
         delete_epic_rx,
         EPIC_AVAILABLE_STATUSES,
+        # PDX 275 support
+        Pdx275Status,
+        Pdx275Scenario,
+        build_pdx275_scenario,
+        upload_pdx275_rx,
+        upload_pdx275_scenario,
+        delete_pdx275_rx,
+        PDX275_AVAILABLE_STATUSES,
     )
     HAS_BUILDER = True
 except ImportError as e:
@@ -183,7 +191,7 @@ MCKESSON_STATUS_INFO = {
 } if HAS_BUILDER else {}
 
 # PMS Types supported
-PMS_TYPES = ["PDX", "McKesson", "Liberty", "Epic"]
+PMS_TYPES = ["PDX", "McKesson", "Liberty", "Epic", "PDX 275"]
 
 # Liberty status descriptions for UI
 LIBERTY_STATUS_INFO = {
@@ -214,6 +222,19 @@ EPIC_STATUS_INFO = {
     EpicStatus.NOT_REFILLABLE_NO_REFILLS: "No refills remaining (ReasonNotFillable=7)",
     EpicStatus.WAITING_FOR_PRESCRIBER: "Waiting for prescriber (ReasonNotRARable=3)",
     EpicStatus.TRANSFERRED: "Rx transferred (ReasonNotRARable=9)",
+} if HAS_BUILDER else {}
+
+# PDX 275 status descriptions for UI
+PDX275_STATUS_INFO = {
+    Pdx275Status.READY_FOR_PICKUP: "Ready for pickup (CHK status=F)",
+    Pdx275Status.IN_QUEUE: "Being filled — in queue (CHK status=N)",
+    Pdx275Status.WAITING_FOR_PRESCRIBER: "Waiting for prescriber (CHK status=D)",
+    Pdx275Status.REFILLABLE: "Available for refill — picked up > 5 days ago",
+    Pdx275Status.RX_PICKED_UP: "Recently picked up — within 5 days",
+    Pdx275Status.CONTROLLED_SUBSTANCE: "Schedule II controlled substance (QRY status=Z)",
+    Pdx275Status.TRANSFERRED: "Rx transferred (QRY status=T)",
+    Pdx275Status.DEACTIVATED: "Rx deactivated (QRY status=D)",
+    Pdx275Status.NOT_REFILLABLE: "No refills remaining",
 } if HAS_BUILDER else {}
 
 SAVED_SCENARIOS_FILE = BASE_DIR / "saved_scenarios_builder.json"
@@ -624,7 +645,7 @@ class PMSIDataBuilderUI:
         card = ttk.LabelFrame(self._rx_list_frame, text=f"RX #{rx['rx_number']} ({pms_type})", padding=8)
         card.pack(fill=X, pady=4, padx=5)
 
-        status_name = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus, LibertyStatus, EpicStatus)) else rx["rx_status"]
+        status_name = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus, LibertyStatus, EpicStatus, Pdx275Status)) else rx["rx_status"]
         info = f"{rx['drug_name']}  |  Status: {status_name}  |  Copay: ${rx.get('copay', 10.0):.2f}"
         ttk.Label(card, text=info, font=("Segoe UI", 10)).pack(side=LEFT)
 
@@ -688,6 +709,8 @@ class PMSIDataBuilderUI:
             status_combo.set(current_status.value)
         elif isinstance(current_status, EpicStatus):
             status_combo.set(current_status.value)
+        elif isinstance(current_status, Pdx275Status):
+            status_combo.set(current_status.value)
         else:
             status_combo.set(str(current_status))
         status_combo.pack(side=LEFT)
@@ -716,6 +739,11 @@ class PMSIDataBuilderUI:
                 status_combo["values"] = new_values
                 status_combo.set(EpicStatus.REFILLABLE.value)
                 drug_hint.configure(text="(no length limit)")
+            elif pms_type == "PDX 275":
+                new_values = [s.value for s in PDX275_AVAILABLE_STATUSES]
+                status_combo["values"] = new_values
+                status_combo.set(Pdx275Status.REFILLABLE.value)
+                drug_hint.configure(text="(max 30 chars)")
             else:
                 new_values = [s.value for s in AVAILABLE_STATUSES]
                 status_combo["values"] = new_values
@@ -803,12 +831,16 @@ class PMSIDataBuilderUI:
                 rx_status = LibertyStatus(status_val)
             elif pms_type == "Epic":
                 rx_status = EpicStatus(status_val)
+            elif pms_type == "PDX 275":
+                rx_status = Pdx275Status(status_val)
             else:
                 rx_status = RxStatus(status_val)
 
             drug_name = fields["drug_name"].get().strip()
             if pms_type == "PDX":
                 drug_name = drug_name[:28]
+            elif pms_type == "PDX 275":
+                drug_name = drug_name[:30]
 
             rx_data = {
                 "pms_type": pms_type,
@@ -854,6 +886,9 @@ class PMSIDataBuilderUI:
             elif pms_type == "Epic":
                 status = EpicStatus(status_val)
                 label.configure(text=EPIC_STATUS_INFO.get(status, ""))
+            elif pms_type == "PDX 275":
+                status = Pdx275Status(status_val)
+                label.configure(text=PDX275_STATUS_INFO.get(status, ""))
             else:
                 status = RxStatus(status_val)
                 label.configure(text=STATUS_INFO.get(status, ""))
@@ -980,6 +1015,21 @@ class PMSIDataBuilderUI:
                     lines.append(f"      ReasonNotFillable:    {epic_scenario.rx.reason_not_fillable}")
                     lines.append(f"      Fill Status:          {epic_scenario.rx.fill_status}")
                     lines.append(f"      DEA Code:             {epic_scenario.rx.dea_code}")
+                elif pms_type == "PDX 275":
+                    pdx275_scenario = build_pdx275_scenario(
+                        status=status,
+                        rx_number=rx["rx_number"],
+                        patient_first=self.patient_data.get("first_name", "TEST"),
+                        patient_last=self.patient_data.get("last_name", "PATIENT"),
+                        drug_name=rx["drug_name"],
+                        store_number=self.patient_data.get("store_number", "01"),
+                        include_p360=False,
+                    )
+                    lines.append(f"      ─── Will produce (PDX 275/Socket): ───")
+                    lines.append(f"      QRY Status:     {pdx275_scenario.rx.qry_status}")
+                    lines.append(f"      CHK Status:     {pdx275_scenario.rx.chk_status}")
+                    lines.append(f"      Drug Schedule:  {pdx275_scenario.rx.drug_schedule}")
+                    lines.append(f"      Refills Flag:   {pdx275_scenario.rx.refills_remaining_flag}")
                 else:
                     scenario = build_scenario(
                         rx_status=status,
@@ -1026,6 +1076,8 @@ class PMSIDataBuilderUI:
                 ncpdp = self.patient_data.get("store_number", "9759001")
                 lines.append(f"  epic/2018/soap11/GetPrescriptionInfoResponse-{rx['rx_number']}-{ncpdp}.xml")
                 lines.append(f"  epic/2018/soap11/RequestFillsResponse-{rx['rx_number']}-{ncpdp}.xml")
+            elif pms_type == "PDX 275":
+                lines.append(f"  [legacy] fsisimdata_pdxs_v275 (append QRY/UPD/CHK for FSIKEY={rx['rx_number']})")
             else:
                 lines.append(f"  PDX/RxResponse{rx['rx_number']}.xml")
                 lines.append(f"  PDX/StatusResponse{rx['rx_number']}.xml")
@@ -1135,6 +1187,34 @@ class PMSIDataBuilderUI:
                     # Upload XML to WireMock
                     upload_epic_scenario(scenario, upload_p360=False)
                     results.append(f"✅ RX# {rx_data['rx_number']} → {rx_data['rx_status'].value} (Epic)")
+
+                    # Upload P360 if enabled
+                    if self.enable_p360.get() and HAS_P360 and scenario.p360_patient:
+                        ensure_patient_with_rx(scenario.p360_patient)
+                        results.append(f"   ✅ P360 prescription merged")
+
+                    self.scenarios.append(scenario)
+
+                elif pms_type == "PDX 275":
+                    scenario = build_pdx275_scenario(
+                        status=rx_data["rx_status"],
+                        rx_number=rx_data["rx_number"],
+                        store_number=self.patient_data.get("store_number", "01"),
+                        patient_first=self.patient_data.get("first_name", "TEST"),
+                        patient_last=self.patient_data.get("last_name", "PATIENT"),
+                        patient_phone=self.patient_data.get("phone", "5550561001"),
+                        patient_dob=self.patient_data.get("dob", "19850115"),
+                        drug_name=rx_data["drug_name"],
+                        client_id=int(self.patient_data.get("client_id", "9001")),
+                        copay=rx_data.get("copay", 10.0),
+                        days_supply=rx_data.get("days_supply", 30),
+                        refills_remaining=rx_data.get("refills_remaining", 3),
+                        include_p360=self.enable_p360.get() and HAS_P360,
+                    )
+
+                    # Upload to legacy sim file
+                    upload_pdx275_scenario(scenario, upload_p360=False)
+                    results.append(f"✅ RX# {rx_data['rx_number']} → {rx_data['rx_status'].value} (PDX 275)")
 
                     # Upload P360 if enabled
                     if self.enable_p360.get() and HAS_P360 and scenario.p360_patient:
@@ -1291,7 +1371,7 @@ class PMSIDataBuilderUI:
         serialized_rxs = []
         for rx in self.prescriptions:
             rx_copy = dict(rx)
-            rx_copy["rx_status"] = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus, LibertyStatus, EpicStatus)) else rx["rx_status"]
+            rx_copy["rx_status"] = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus, LibertyStatus, EpicStatus, Pdx275Status)) else rx["rx_status"]
             serialized_rxs.append(rx_copy)
 
         scenario_data = {
@@ -1344,6 +1424,8 @@ class PMSIDataBuilderUI:
                         rx_copy["rx_status"] = LibertyStatus(rx_copy["rx_status"])
                     elif pms_type == "Epic":
                         rx_copy["rx_status"] = EpicStatus(rx_copy["rx_status"])
+                    elif pms_type == "PDX 275":
+                        rx_copy["rx_status"] = Pdx275Status(rx_copy["rx_status"])
                     else:
                         rx_copy["rx_status"] = RxStatus(rx_copy["rx_status"])
                 except ValueError:
