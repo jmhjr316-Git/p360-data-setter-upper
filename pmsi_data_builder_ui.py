@@ -163,8 +163,9 @@ ENVIRONMENTS = {
     },
     "Staging": {
         "name": "Staging Environment",
-        "sim_base_url": "http://pmssim-ocp-sit.k8s.raleng.omnicell.com/FsiXmlSimulator/manage.jsp",
-        "description": "Staging (pmssim via Kong ingress — pending DNS)",
+        "sim_base_url": "https://10.13.60.40/FsiXmlSimulator/manage.jsp",
+        "sim_host_header": "pmssim-ocp-sit.k8s.raleng.omnicell.com",
+        "description": "Staging (pmssim via Kong — DNS pending, using IP)",
     },
 }
 
@@ -1523,12 +1524,10 @@ class PMSIDataBuilderUI:
         new_env = self.env_combo.get()
         if new_env != self.current_environment:
             self.current_environment = new_env
-            # The builder library uses a module-level SIM_BASE_URL;
-            # for environment switching, we'd need to update it.
-            # For now, show a note:
             import tests.helpers_pms_sim as pms_mod
             env_url = ENVIRONMENTS[new_env]["sim_base_url"]
             pms_mod.SIM_BASE_URL = env_url
+            pms_mod.SIM_HOST_HEADER = ENVIRONMENTS[new_env].get("sim_host_header", "")
             self.root.title(f"PMSI Data Builder — {new_env}")
             logger.info("Switched to %s: %s", new_env, env_url)
 

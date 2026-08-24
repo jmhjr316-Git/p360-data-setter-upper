@@ -89,7 +89,15 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 
 SIM_BASE_URL = "https://pmssim.pc.q.awscloud.private/FsiXmlSimulator/manage.jsp"
+SIM_HOST_HEADER = ""  # Set when using IP-based access (e.g., staging via Kong IP)
 DEFAULT_STORE_NUMBER = "70050001"  # QA store number for client 8000 (pmsStoreNumber for XML)
+
+
+def _sim_headers() -> dict:
+    """Get HTTP headers for sim requests (includes Host header if set)."""
+    if SIM_HOST_HEADER:
+        return {"Host": SIM_HOST_HEADER}
+    return {}
 DEFAULT_CLIENT_ID = 8000
 DEFAULT_STORE_ID = 9001  # OPE store ID (from channel config orgContext URN)
 DEFAULT_STORE_NPI = "1821516543"  # Pharmacy NPI for the store
@@ -915,7 +923,7 @@ def upload_rx(rx: SimRx) -> None:
         for file_path, content in files.items():
             encoded_content = urllib.parse.quote(content)
             url = f"{SIM_BASE_URL}?action=write&file_path={file_path}&content={encoded_content}"
-            resp = client.get(url)
+            resp = client.get(url, headers=_sim_headers())
             if resp.status_code != 200 or "error" in resp.text.lower():
                 raise RuntimeError(
                     f"Failed to upload {file_path}: {resp.status_code} {resp.text[:200]}"
@@ -957,7 +965,7 @@ def list_sim_files(path: str = "PDX") -> list[str]:
     """List files on the simulator at the given path."""
     with httpx.Client(verify=False, timeout=10.0) as client:
         url = f"{SIM_BASE_URL}?action=list&file_path={path}"
-        resp = client.get(url)
+        resp = client.get(url, headers=_sim_headers())
         if resp.status_code != 200:
             raise RuntimeError(f"Failed to list files: {resp.status_code} {resp.text[:200]}")
         # Response is newline-separated file list
@@ -1486,7 +1494,7 @@ def upload_mckesson_rx(rx: McKessonRx) -> None:
         for file_path, content in files.items():
             encoded_content = urllib.parse.quote(content)
             url = f"{SIM_BASE_URL}?action=write&file_path={file_path}&content={encoded_content}"
-            resp = client.get(url)
+            resp = client.get(url, headers=_sim_headers())
             if resp.status_code != 200 or "error" in resp.text.lower():
                 raise RuntimeError(
                     f"Failed to upload {file_path}: {resp.status_code} {resp.text[:200]}"
@@ -3401,7 +3409,7 @@ def upload_pdx275_rx(scenario: Pdx275Scenario) -> None:
 
     encoded = urllib.parse.quote(content)
     url = f"{PDX275_SIM_URL}?action=append&base=legacy&file_path={PDX275_DATA_FILE}&content={encoded}"
-    resp = requests.get(url, verify=False, timeout=10)
+    resp = requests.get(url, headers=_sim_headers(), verify=False, timeout=10)
     if resp.status_code != 200 or "success" not in resp.text:
         raise RuntimeError(f"Failed to append PDX 275 data: {resp.text}")
 
@@ -3412,7 +3420,7 @@ def delete_pdx275_rx(rx_number: str) -> None:
 
     # Read current file
     url = f"{PDX275_SIM_URL}?action=read&base=legacy&file_path={PDX275_DATA_FILE}"
-    resp = requests.get(url, verify=False, timeout=30)
+    resp = requests.get(url, headers=_sim_headers(), verify=False, timeout=30)
     if resp.status_code != 200:
         raise RuntimeError(f"Failed to read PDX 275 file: {resp.status_code}")
 
@@ -3444,7 +3452,7 @@ def delete_pdx275_rx(rx_number: str) -> None:
     # Write back via POST
     new_content = "\n".join(filtered)
     url = f"{PDX275_SIM_URL}?action=write&base=legacy&file_path={PDX275_DATA_FILE}"
-    resp = requests.post(url, data={"content": new_content}, verify=False, timeout=30)
+    resp = requests.post(url, data={"content": new_content}, headers=_sim_headers(), verify=False, timeout=30)
     if resp.status_code != 200 or "success" not in resp.text:
         raise RuntimeError(f"Failed to write PDX 275 file: {resp.text}")
 
@@ -3881,7 +3889,7 @@ def upload_atebgen_rx(scenario: AtebGenScenario) -> None:
 
     encoded = urllib.parse.quote(content)
     url = f"{PDX275_SIM_URL}?action=append&base=legacy&file_path={ATEBGEN_DATA_FILE}&content={encoded}"
-    resp = requests.get(url, verify=False, timeout=10)
+    resp = requests.get(url, headers=_sim_headers(), verify=False, timeout=10)
     if resp.status_code != 200 or "success" not in resp.text:
         raise RuntimeError(f"Failed to append ATEBGEN data: {resp.text}")
 
@@ -3891,7 +3899,7 @@ def delete_atebgen_rx(rx_number: str) -> None:
     import requests
 
     url = f"{PDX275_SIM_URL}?action=read&base=legacy&file_path={ATEBGEN_DATA_FILE}"
-    resp = requests.get(url, verify=False, timeout=30)
+    resp = requests.get(url, headers=_sim_headers(), verify=False, timeout=30)
     if resp.status_code != 200:
         raise RuntimeError(f"Failed to read ATEBGEN file: {resp.status_code}")
 
@@ -3916,7 +3924,7 @@ def delete_atebgen_rx(rx_number: str) -> None:
 
     new_content = "\n".join(filtered)
     url = f"{PDX275_SIM_URL}?action=write&base=legacy&file_path={ATEBGEN_DATA_FILE}"
-    resp = requests.post(url, data={"content": new_content}, verify=False, timeout=30)
+    resp = requests.post(url, data={"content": new_content}, headers=_sim_headers(), verify=False, timeout=30)
     if resp.status_code != 200 or "success" not in resp.text:
         raise RuntimeError(f"Failed to write ATEBGEN file: {resp.text}")
 
