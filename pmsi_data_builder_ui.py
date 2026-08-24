@@ -142,13 +142,13 @@ BASE_DIR = Path(__file__).parent
 ENVIRONMENTS = {
     "QA": {
         "name": "QA Environment",
-        "sim_base_url": "https://ivr-mock-svcs.pc.q.awscloud.private/FsiXmlSimulator/manage.jsp",
-        "description": "QA (ivr-mock-svcs.pc.q)",
+        "sim_base_url": "https://pmssim.pc.q.awscloud.private/FsiXmlSimulator/manage.jsp",
+        "description": "QA (pmssim.pc.q — direct)",
     },
     "Staging": {
         "name": "Staging Environment",
         "sim_base_url": "http://pmssim-ocp-sit.k8s.raleng.omnicell.com/FsiXmlSimulator/manage.jsp",
-        "description": "Staging (pmssim via Kong ingress)",
+        "description": "Staging (pmssim via Kong ingress — pending DNS)",
     },
 }
 

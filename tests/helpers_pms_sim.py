@@ -88,7 +88,7 @@ logger = logging.getLogger(__name__)
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
 
-SIM_BASE_URL = "https://ivr-mock-svcs.pc.q.awscloud.private/FsiXmlSimulator/manage.jsp"
+SIM_BASE_URL = "https://pmssim.pc.q.awscloud.private/FsiXmlSimulator/manage.jsp"
 DEFAULT_STORE_NUMBER = "70050001"  # QA store number for client 8000 (pmsStoreNumber for XML)
 DEFAULT_CLIENT_ID = 8000
 DEFAULT_STORE_ID = 9001  # OPE store ID (from channel config orgContext URN)
