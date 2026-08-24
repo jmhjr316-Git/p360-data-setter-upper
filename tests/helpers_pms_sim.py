@@ -2769,22 +2769,25 @@ ATEB_DB_PASS = "ateb"
 # Adapter type IDs (from pms.adaptertype)
 ADAPTER_TYPE_IDS = {
     "PDX": 3,       # PDXEPS
+    "PDX275": 1,    # PDX275 (socket via on-prem relay)
     "McKesson": 6,  # MCKESSON
     "Liberty": 7,   # LIBERTY
     "Epic": 10,     # EPIC2018
 }
 
-# Connection configs: adapter → (connectionconfigid, url)
+# Connection configs: adapter → (connectionconfigid, url, communicationtypeid, isdirect, host, port)
 CONNECTION_CONFIGS = {
-    "PDX": (11, "http://pmssim:8181/FsiXmlSimulator/PDXSimulatorServlet"),
-    "McKesson": (15, "http://pmssim:8181/FsiXmlSimulator/PerSeSimulatorServlet"),
-    "Liberty": (17, "http://ivr-mock-svcs:8080/libertypms"),
-    "Epic": (18, "http://ivr-mock-svcs:8080/epic/PharmacyServices2018/soap11"),
+    "PDX": (11, "http://pmssim:8181/FsiXmlSimulator/PDXSimulatorServlet", 2, False, "pmssim", 8080),
+    "PDX275": (7, "", 1, True, "pmssim", 5811),  # isdirect=true → routes through pms-onprem relay
+    "McKesson": (15, "http://pmssim:8181/FsiXmlSimulator/PerSeSimulatorServlet", 2, True, "notuse", 0),
+    "Liberty": (17, "http://ivr-mock-svcs:8080/libertypms", 2, True, "", None),
+    "Epic": (18, "http://ivr-mock-svcs:8080/epic/PharmacyServices2018/soap11", 4, True, "", None),
 }
 
 # Default store numbers per PMS type
 DEFAULT_PMS_STORES = {
     "PDX": "70050001",
+    "PDX275": "01",
     "McKesson": "125",
     "Liberty": "8174884613",
     "Epic": "9759001",
@@ -2825,7 +2828,7 @@ def ensure_pms_config(
         raise ValueError(f"Unknown pms_type: {pms_type}. Must be one of: {list(ADAPTER_TYPE_IDS.keys())}")
 
     adapter_type_id = ADAPTER_TYPE_IDS[pms_type]
-    conn_id, conn_url = CONNECTION_CONFIGS[pms_type]
+    conn_id, conn_url, comm_type_id, is_direct, conn_host, conn_port = CONNECTION_CONFIGS[pms_type]
     if store_id is None:
         store_id = DEFAULT_PMS_STORES[pms_type]
 
@@ -2839,9 +2842,16 @@ def ensure_pms_config(
             )
             if not cur.fetchone():
                 cur.execute(
-                    "INSERT INTO pms.connectionconfig (connectionconfigid, url, communicationtypeid) "
-                    "VALUES (%s, %s, 2)",
-                    (conn_id, conn_url)
+                    "INSERT INTO pms.connectionconfig "
+                    "(connectionconfigid, url, communicationtypeid, isdirect, host, port) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (conn_id, conn_url, comm_type_id, is_direct, conn_host or "", conn_port or 0)
+                )
+            else:
+                # Ensure isdirect is correct (may have been reset)
+                cur.execute(
+                    "UPDATE pms.connectionconfig SET isdirect = %s WHERE connectionconfigid = %s",
+                    (is_direct, conn_id)
                 )
 
             # 2. Ensure clientconfig exists
