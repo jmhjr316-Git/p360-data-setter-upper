@@ -1606,3 +1606,594 @@ def create_mckesson_no_refills(rx_number: str, **kwargs) -> McKessonScenario:
 
 # List of McKesson statuses available for the UI
 MCKESSON_AVAILABLE_STATUSES = list(McKessonStatus)
+
+
+# =============================================================================
+# LIBERTY PMS BUILDER
+# =============================================================================
+# Liberty uses JSON files served by WireMock (not the Tomcat PMS simulator).
+# Upload mechanism: PUT to WireMock admin API at /__admin/files/liberty/
+# Three files per Rx:
+#   - libertyquery{rxnum}.json  (GET /libertypms/prescription/{rxnum})
+#   - libertystatus{rxnum}.json (GET /libertypms/refill/{rxnum})
+#   - libertyrefill{rxnum}.json (POST /libertypms/refill)
+# =============================================================================
+
+WIREMOCK_BASE_URL = "https://ivr-mock-svcs.pc.q.awscloud.private"
+WIREMOCK_FILES_API = f"{WIREMOCK_BASE_URL}/__admin/files"
+
+
+class LibertyStatus(str, Enum):
+    """Liberty PMS statuses that the builder can produce."""
+    READY_FOR_PICKUP = "READY_FOR_PICKUP"
+    IN_QUEUE = "IN_QUEUE"
+    REFILLABLE = "REFILLABLE"
+    RX_PICKED_UP = "RX_PICKED_UP"
+    SHIPPED = "SHIPPED"
+    CONTROLLED_SUBSTANCE = "CONTROLLED_SUBSTANCE"
+    TOO_SOON = "TOO_SOON"
+    NOT_REFILLABLE_NO_REFILLS = "NOT_REFILLABLE_NO_REFILLS"
+    NOT_REFILLABLE_EXPIRED = "NOT_REFILLABLE_EXPIRED"
+    ON_HOLD = "ON_HOLD"
+
+
+@dataclass
+class LibertyRx:
+    """Represents a Liberty prescription with all fields needed for JSON generation."""
+    rx_number: str
+    patient_first: str = "STATUS"
+    patient_last: str = "TESTPATIENT"
+    patient_phone: str = "5550561001"
+    patient_dob: str = "1985-01-15"  # YYYY-MM-DD
+    drug_name: str = "LISINOPRIL 10MG TAB"
+    drug_ndc: str = "00591073101"
+    drug_schedule: str = ""  # empty = non-controlled, "2" = Schedule II
+    prescriber_first: str = "JOHN"
+    prescriber_last: str = "SMITH"
+    prescriber_npi: str = "1234567890"
+    # Rx details
+    refills_authorized: int = 5
+    last_refill_number: int = 1
+    days_supply: int = 30
+    dispense_quantity: int = 30
+    copay: float = 10.0
+    # Fill status - last fill in the fills array
+    last_fill_status_code: str = "Verified"  # Entered, Counted, Verified, PickedUp, Delivered, Shipped
+    last_fill_date: str = ""  # YYYY-MM-DD, auto-calculated if empty
+    pickup_date: str | None = None  # YYYY-MM-DD or None
+    # Status file fields
+    status_status: str = "Refillable"  # Refillable, No_Refills, Expired, Too_Early, On_Hold
+    status_last_fill_status: str = "Picked_Up"  # Ready, In_Process, Shipped, Picked_Up, Delivered
+    status_last_fill_date: str = ""  # M/D/YYYY format for status file
+    # Computed
+    refills_remaining: int = 4
+    available_quantity: int = 90
+    written_date: str = ""
+    refill_until_date: str = ""
+
+
+@dataclass
+class LibertyScenario:
+    """A complete Liberty test scenario including all JSON content."""
+    rx: LibertyRx
+    query_json: str  # libertyquery content
+    status_json: str  # libertystatus content
+    refill_json: str  # libertyrefill content
+    p360_patient: dict | None = None
+
+
+def _normalize_dob_to_liberty(dob: str) -> str:
+    """Convert various DOB formats to YYYY-MM-DD for Liberty."""
+    dob = dob.strip()
+    if len(dob) == 8 and dob.isdigit():
+        # YYYYMMDD
+        return f"{dob[:4]}-{dob[4:6]}-{dob[6:8]}"
+    if "T" in dob:
+        return dob.split("T")[0]
+    if "-" in dob and len(dob) == 10:
+        return dob
+    return dob
+
+
+def build_liberty_scenario(
+    status: LibertyStatus,
+    rx_number: str,
+    patient_first: str = "STATUS",
+    patient_last: str = "TESTPATIENT",
+    patient_phone: str = "5550561001",
+    patient_dob: str = "19850115",
+    drug_name: str = "LISINOPRIL 10MG TAB",
+    drug_ndc: str = "00591073101",
+    store_number: str = "70050001",
+    client_id: int = 8000,
+    copay: float = 10.0,
+    days_supply: int = 30,
+    refills_remaining: int = 4,
+    refills_authorized: int = 5,
+    include_p360: bool = True,
+) -> LibertyScenario:
+    """Build a Liberty scenario that will resolve to the desired status.
+
+    The Liberty adapter maps JSON fields to RxInfoV2DTO, then RxStatusUtils
+    determines the final status based on the same logic as PDX/McKesson.
+    """
+    now = datetime.now()
+    dob_formatted = _normalize_dob_to_liberty(patient_dob)
+
+    # Defaults
+    last_fill_status_code = "Verified"
+    status_status = "Refillable"
+    status_last_fill_status = "Picked_Up"
+    drug_schedule = ""
+    pickup_date = None
+    last_refill_number = 1
+
+    # Calculate dates based on desired status
+    if status == LibertyStatus.READY_FOR_PICKUP:
+        # Last fill statusCode = "Verified" → READY_FOR_PICKUP in INFO
+        # Status file lastFill.status = "Ready"
+        last_fill_status_code = "Verified"
+        status_status = "Refillable"
+        status_last_fill_status = "Ready"
+        fill_date = now - timedelta(days=1)
+        pickup_date = None
+
+    elif status == LibertyStatus.IN_QUEUE:
+        # Last fill statusCode = "Entered" → IN_QUEUE
+        # Status file lastFill.status = "In_Process"
+        last_fill_status_code = "Entered"
+        status_status = "Refillable"
+        status_last_fill_status = "In_Process"
+        fill_date = now - timedelta(days=1)
+        pickup_date = None
+
+    elif status == LibertyStatus.REFILLABLE:
+        # PickedUp long ago (> daysAfterPickup=5)
+        last_fill_status_code = "PickedUp"
+        status_status = "Refillable"
+        status_last_fill_status = "Picked_Up"
+        fill_date = now - timedelta(days=days_supply + 10)
+        pickup_date = (fill_date + timedelta(days=2)).strftime("%Y-%m-%d")
+
+    elif status == LibertyStatus.RX_PICKED_UP:
+        # PickedUp recently (≤ daysAfterPickup=5)
+        last_fill_status_code = "PickedUp"
+        status_status = "Refillable"
+        status_last_fill_status = "Picked_Up"
+        fill_date = now - timedelta(days=2)
+        pickup_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    elif status == LibertyStatus.SHIPPED:
+        # Delivered/Shipped
+        last_fill_status_code = "Delivered"
+        status_status = "Refillable"
+        status_last_fill_status = "Delivered"
+        fill_date = now - timedelta(days=3)
+        pickup_date = None
+
+    elif status == LibertyStatus.CONTROLLED_SUBSTANCE:
+        # Schedule 2 drug, otherwise refillable
+        last_fill_status_code = "PickedUp"
+        status_status = "Refillable"
+        status_last_fill_status = "Picked_Up"
+        drug_schedule = "2"
+        fill_date = now - timedelta(days=days_supply + 10)
+        pickup_date = (fill_date + timedelta(days=2)).strftime("%Y-%m-%d")
+
+    elif status == LibertyStatus.TOO_SOON:
+        # Fill very recent, low % consumed
+        last_fill_status_code = "PickedUp"
+        status_status = "Too_Early"
+        status_last_fill_status = "Picked_Up"
+        fill_date = now - timedelta(days=2)
+        pickup_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    elif status == LibertyStatus.NOT_REFILLABLE_NO_REFILLS:
+        # No refills remaining
+        last_fill_status_code = "PickedUp"
+        status_status = "No_Refills"
+        status_last_fill_status = "Picked_Up"
+        refills_remaining = 0
+        refills_authorized = last_refill_number
+        fill_date = now - timedelta(days=30)
+        pickup_date = (fill_date + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    elif status == LibertyStatus.NOT_REFILLABLE_EXPIRED:
+        # Rx expired
+        last_fill_status_code = "PickedUp"
+        status_status = "Expired"
+        status_last_fill_status = "Picked_Up"
+        fill_date = now - timedelta(days=365)
+        pickup_date = (fill_date + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    elif status == LibertyStatus.ON_HOLD:
+        # On hold
+        last_fill_status_code = "PickedUp"
+        status_status = "On_Hold"
+        status_last_fill_status = "Picked_Up"
+        fill_date = now - timedelta(days=10)
+        pickup_date = None
+
+    else:
+        raise ValueError(f"Unsupported Liberty status: {status}")
+
+    fill_date_str = fill_date.strftime("%Y-%m-%d")
+    written_date = (fill_date - timedelta(days=30)).strftime("%Y-%m-%d")
+    refill_until_date = (now + timedelta(days=365)).strftime("%Y-%m-%d")
+
+    # Status file uses M/D/YYYY for dates
+    status_fill_date_str = f"{fill_date.month}/{fill_date.day}/{fill_date.year}"
+    status_refill_until = f"{(now + timedelta(days=365)).month}/{(now + timedelta(days=365)).day}/{(now + timedelta(days=365)).year}"
+
+    dispense_quantity = days_supply  # typically matches
+    available_quantity = refills_remaining * dispense_quantity if refills_remaining > 0 else 0
+
+    rx = LibertyRx(
+        rx_number=rx_number,
+        patient_first=patient_first,
+        patient_last=patient_last,
+        patient_phone=patient_phone,
+        patient_dob=dob_formatted,
+        drug_name=drug_name,
+        drug_ndc=drug_ndc,
+        drug_schedule=drug_schedule,
+        prescriber_first="JOHN",
+        prescriber_last="SMITH",
+        prescriber_npi="1234567890",
+        refills_authorized=refills_authorized,
+        last_refill_number=last_refill_number,
+        days_supply=days_supply,
+        dispense_quantity=dispense_quantity,
+        copay=copay,
+        last_fill_status_code=last_fill_status_code,
+        last_fill_date=fill_date_str,
+        pickup_date=pickup_date,
+        status_status=status_status,
+        status_last_fill_status=status_last_fill_status,
+        status_last_fill_date=status_fill_date_str,
+        refills_remaining=refills_remaining,
+        available_quantity=available_quantity,
+        written_date=written_date,
+        refill_until_date=refill_until_date,
+    )
+
+    query_json = _build_liberty_query_json(rx)
+    status_json = _build_liberty_status_json(rx, status_refill_until)
+    refill_json = _build_liberty_refill_json(rx)
+
+    p360_patient = None
+    if include_p360:
+        p360_patient = _build_p360_patient(
+            patient_first=patient_first,
+            patient_last=patient_last,
+            patient_phone=patient_phone,
+            patient_dob=patient_dob,
+            rx_number=rx_number,
+            drug_name=drug_name,
+            days_supply=days_supply,
+            store_number=store_number,
+            client_id=client_id,
+        )
+
+    return LibertyScenario(
+        rx=rx,
+        query_json=query_json,
+        status_json=status_json,
+        refill_json=refill_json,
+        p360_patient=p360_patient,
+    )
+
+
+def _build_liberty_query_json(rx: LibertyRx) -> str:
+    """Build the libertyquery JSON file content."""
+    import json
+
+    # Build fill history - single fill entry (the last one)
+    fill = {
+        "RefillNumber": rx.last_refill_number,
+        "DispenseDate": rx.last_fill_date,
+        "DispenseQuantity": rx.dispense_quantity,
+        "DaysSupply": rx.days_supply,
+        "DrugDispensed": {
+            "Id": "DRUG1",
+            "NDC": rx.drug_ndc,
+            "Name": rx.drug_name,
+            "IsCompound": 0,
+            "IsVaccine": 0,
+            "Manufacturer": "GENERIC PHARMA",
+            "Schedule": rx.drug_schedule,
+            "Imprint": "",
+            "Warnings": [],
+            "CustomField1": "",
+            "CustomField2": "",
+            "CustomField3": "",
+            "CustomField4": "",
+            "Strength": "",
+            "Form": "TAB",
+        },
+        "SIG": "TAKE ONE TABLET BY MOUTH DAILY",
+        "DAW": "0",
+        "RphInitials": "RP",
+        "RphName": "Robert Pharmacist",
+        "Status": rx.last_fill_status_code,
+        "StatusCode": rx.last_fill_status_code,
+        "StatusCodeDate": f"{rx.last_fill_date} 10:00:00",
+        "PatientPay": rx.copay,
+        "ExpirationDate": (datetime.strptime(rx.last_fill_date, "%Y-%m-%d") + timedelta(days=rx.days_supply)).strftime("%Y-%m-%d"),
+        "LotNumber": "",
+        "WorkflowLocation": None,
+        "Cost": 5.0,
+        "ACQ": 5.0,
+        "AWP": 50.0,
+        "UsualAndCustomary": 55.0,
+        "Doses": None,
+        "Primary": None,
+        "Secondary": None,
+        "LastModified": f"{rx.last_fill_date} 10:00:00",
+        "PickupDate": f"{rx.pickup_date} 14:00:00" if rx.pickup_date else None,
+    }
+
+    query = {
+        "ScriptNumber": int(rx.rx_number),
+        "WrittenDate": rx.written_date,
+        "RefillsAuthorized": rx.refills_authorized,
+        "LastRefillNumber": rx.last_refill_number,
+        "RefillUntilDate": rx.refill_until_date,
+        "FullDispenseQuantity": rx.dispense_quantity,
+        "AuthorizedQuantity": rx.refills_authorized * rx.dispense_quantity,
+        "AvailableQuantity": rx.available_quantity,
+        "Origin": "3",
+        "Patient": {
+            "Id": f"PAT{rx.rx_number}",
+            "ExternalId": "",
+            "AccountNumber": 0,
+            "ChargeCode": "N",
+            "Name": {
+                "FirstName": rx.patient_first.upper(),
+                "MiddleInitial": "",
+                "LastName": rx.patient_last.upper(),
+            },
+            "Address": {
+                "Street1": "123 TEST ST",
+                "Street2": "",
+                "City": "TESTVILLE",
+                "State": "TX",
+                "Zip": "75001",
+            },
+            "BirthDate": rx.patient_dob,
+            "Gender": "M",
+            "SSN": "",
+            "DriversLicenseNumber": "",
+            "Phone": rx.patient_phone,
+            "PhoneType": "H",
+            "Phone2": "",
+            "Phone2Type": None,
+            "IsTextOk": 0,
+            "Email": "",
+            "Language": "en_US",
+            "CustomField1": "",
+            "CustomField2": "",
+            "CustomField3": "",
+            "CustomField4": "",
+            "Allergies": [],
+            "NursingHome": None,
+        },
+        "DrugPrescribed": {
+            "Id": "DRUG1",
+            "NDC": rx.drug_ndc,
+            "Name": rx.drug_name,
+            "IsCompound": 0,
+            "IsVaccine": 0,
+            "Manufacturer": "GENERIC PHARMA",
+            "Schedule": rx.drug_schedule,
+            "Imprint": "",
+            "Warnings": [],
+            "CustomField1": "",
+            "CustomField2": "",
+            "CustomField3": "",
+            "CustomField4": "",
+            "Strength": "",
+            "Form": "TAB",
+        },
+        "Prescriber": {
+            "Id": "DOC001",
+            "Name": {
+                "FirstName": rx.prescriber_first,
+                "MiddleInitial": "",
+                "LastName": rx.prescriber_last,
+            },
+            "Clinic": "TEST CLINIC",
+            "Address": {
+                "Street1": "456 MEDICAL DR",
+                "Street2": "",
+                "City": "TESTVILLE",
+                "State": "TX",
+                "Zip": "75001",
+            },
+            "Phone": "5551234567",
+            "Fax": "5551234568",
+            "NPI": rx.prescriber_npi,
+            "DEA": "AS1234567",
+            "CustomField1": "",
+            "CustomField2": "",
+            "CustomField3": "",
+            "CustomField4": "",
+        },
+        "QueueName": "",
+        "IsAutoFill": 0,
+        "Location": None,
+        "Status": None,
+        "StatusCode": None,
+        "Fills": [fill],
+    }
+
+    return json.dumps(query, indent=2)
+
+
+def _build_liberty_status_json(rx: LibertyRx, refill_until: str) -> str:
+    """Build the libertystatus JSON file content."""
+    import json
+
+    status = {
+        "ScriptNumber": int(rx.rx_number),
+        "Status": rx.status_status,
+        "RefillsAuthorized": rx.refills_authorized,
+        "LastRefillNumber": rx.last_refill_number,
+        "RefillUntilDate": refill_until,
+        "FullDispenseQuantity": rx.dispense_quantity,
+        "AuthorizedQuantity": rx.refills_authorized * rx.dispense_quantity,
+        "AvailableQuantity": rx.available_quantity,
+        "LastFill": {
+            "RefillNumber": rx.last_refill_number,
+            "DispenseDate": rx.status_last_fill_date,
+            "DispenseQuantity": rx.dispense_quantity,
+            "DaysSupply": rx.days_supply,
+            "Status": rx.status_last_fill_status,
+        },
+    }
+
+    return json.dumps(status, indent=2)
+
+
+def _build_liberty_refill_json(rx: LibertyRx) -> str:
+    """Build the libertyrefill JSON file content (always success)."""
+    import json
+
+    refill = [{"ScriptNumber": rx.rx_number, "Status": "Success"}]
+    return json.dumps(refill, indent=2)
+
+
+def upload_liberty_rx(rx_number: str, query_json: str, status_json: str, refill_json: str) -> None:
+    """Upload Liberty JSON files to WireMock via the admin files API."""
+    import requests
+
+    files_to_upload = [
+        (f"liberty/libertyquery{rx_number}.json", query_json),
+        (f"liberty/libertystatus{rx_number}.json", status_json),
+        (f"liberty/libertyrefill{rx_number}.json", refill_json),
+    ]
+
+    for file_path, content in files_to_upload:
+        url = f"{WIREMOCK_FILES_API}/{file_path}"
+        resp = requests.put(url, data=content.encode("utf-8"),
+                            headers={"Content-Type": "application/octet-stream"},
+                            verify=False, timeout=10)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(
+                f"Failed to upload {file_path}: HTTP {resp.status_code} — {resp.text}"
+            )
+
+
+def delete_liberty_rx(rx_number: str) -> None:
+    """Delete Liberty JSON files from WireMock."""
+    import requests
+
+    files_to_delete = [
+        f"liberty/libertyquery{rx_number}.json",
+        f"liberty/libertystatus{rx_number}.json",
+        f"liberty/libertyrefill{rx_number}.json",
+    ]
+
+    for file_path in files_to_delete:
+        url = f"{WIREMOCK_FILES_API}/{file_path}"
+        resp = requests.delete(url, verify=False, timeout=10)
+        # 200 or 404 are both fine (file might not exist)
+        if resp.status_code not in (200, 204, 404):
+            raise RuntimeError(
+                f"Failed to delete {file_path}: HTTP {resp.status_code} — {resp.text}"
+            )
+
+
+def upload_liberty_scenario(scenario: LibertyScenario, upload_p360: bool = True) -> None:
+    """Upload all files for a Liberty scenario."""
+    upload_liberty_rx(
+        scenario.rx.rx_number,
+        scenario.query_json,
+        scenario.status_json,
+        scenario.refill_json,
+    )
+    if upload_p360 and scenario.p360_patient:
+        _upsert_p360_patient(scenario.p360_patient)
+
+
+def delete_liberty_scenario(scenario: LibertyScenario, delete_p360: bool = False) -> None:
+    """Delete all files for a Liberty scenario."""
+    delete_liberty_rx(scenario.rx.rx_number)
+    if delete_p360 and scenario.p360_patient:
+        _delete_p360_patient(scenario.p360_patient)
+
+
+# --- Liberty convenience one-liners ---
+
+def create_liberty_ready_for_pickup(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty READY_FOR_PICKUP scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.READY_FOR_PICKUP, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+def create_liberty_in_queue(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty IN_QUEUE scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.IN_QUEUE, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+def create_liberty_refillable(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty REFILLABLE scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.REFILLABLE, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+def create_liberty_picked_up(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty RX_PICKED_UP scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.RX_PICKED_UP, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+def create_liberty_shipped(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty SHIPPED scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.SHIPPED, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+def create_liberty_controlled(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty CONTROLLED_SUBSTANCE scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.CONTROLLED_SUBSTANCE, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+def create_liberty_too_soon(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty TOO_SOON scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.TOO_SOON, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+def create_liberty_no_refills(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty NOT_REFILLABLE_NO_REFILLS scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.NOT_REFILLABLE_NO_REFILLS, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+def create_liberty_expired(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty NOT_REFILLABLE_EXPIRED scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.NOT_REFILLABLE_EXPIRED, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+def create_liberty_on_hold(rx_number: str, **kwargs) -> LibertyScenario:
+    """Create and upload a Liberty ON_HOLD scenario."""
+    scenario = build_liberty_scenario(status=LibertyStatus.ON_HOLD, rx_number=rx_number, **kwargs)
+    upload_liberty_scenario(scenario)
+    return scenario
+
+
+# List of Liberty statuses available for the UI
+LIBERTY_AVAILABLE_STATUSES = list(LibertyStatus)

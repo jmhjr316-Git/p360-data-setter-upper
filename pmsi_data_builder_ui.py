@@ -100,6 +100,14 @@ try:
         upload_mckesson_scenario,
         delete_mckesson_rx,
         MCKESSON_AVAILABLE_STATUSES,
+        # Liberty support
+        LibertyStatus,
+        LibertyScenario,
+        build_liberty_scenario,
+        upload_liberty_rx,
+        upload_liberty_scenario,
+        delete_liberty_rx,
+        LIBERTY_AVAILABLE_STATUSES,
     )
     HAS_BUILDER = True
 except ImportError as e:
@@ -167,7 +175,21 @@ MCKESSON_STATUS_INFO = {
 } if HAS_BUILDER else {}
 
 # PMS Types supported
-PMS_TYPES = ["PDX", "McKesson"]
+PMS_TYPES = ["PDX", "McKesson", "Liberty"]
+
+# Liberty status descriptions for UI
+LIBERTY_STATUS_INFO = {
+    LibertyStatus.READY_FOR_PICKUP: "Ready for pickup (Verified fill status)",
+    LibertyStatus.IN_QUEUE: "Being filled — in queue (Entered fill status)",
+    LibertyStatus.REFILLABLE: "Available for refill — picked up > 5 days ago",
+    LibertyStatus.RX_PICKED_UP: "Recently picked up — within 5 days",
+    LibertyStatus.SHIPPED: "Shipped/Delivered to patient",
+    LibertyStatus.CONTROLLED_SUBSTANCE: "Schedule II controlled substance",
+    LibertyStatus.TOO_SOON: "Too soon to refill (Status=Too_Early)",
+    LibertyStatus.NOT_REFILLABLE_NO_REFILLS: "No refills remaining (Status=No_Refills)",
+    LibertyStatus.NOT_REFILLABLE_EXPIRED: "Rx expired (Status=Expired)",
+    LibertyStatus.ON_HOLD: "Rx on hold (Status=On_Hold)",
+} if HAS_BUILDER else {}
 
 SAVED_SCENARIOS_FILE = BASE_DIR / "saved_scenarios_builder.json"
 SAVED_STORES_FILE = BASE_DIR / "saved_stores.json"
@@ -577,7 +599,7 @@ class PMSIDataBuilderUI:
         card = ttk.LabelFrame(self._rx_list_frame, text=f"RX #{rx['rx_number']} ({pms_type})", padding=8)
         card.pack(fill=X, pady=4, padx=5)
 
-        status_name = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus)) else rx["rx_status"]
+        status_name = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus, LibertyStatus)) else rx["rx_status"]
         info = f"{rx['drug_name']}  |  Status: {status_name}  |  Copay: ${rx.get('copay', 10.0):.2f}"
         ttk.Label(card, text=info, font=("Segoe UI", 10)).pack(side=LEFT)
 
@@ -637,6 +659,8 @@ class PMSIDataBuilderUI:
             status_combo.set(current_status.value)
         elif isinstance(current_status, McKessonStatus):
             status_combo.set(current_status.value)
+        elif isinstance(current_status, LibertyStatus):
+            status_combo.set(current_status.value)
         else:
             status_combo.set(str(current_status))
         status_combo.pack(side=LEFT)
@@ -654,6 +678,11 @@ class PMSIDataBuilderUI:
                 new_values = [s.value for s in MCKESSON_AVAILABLE_STATUSES]
                 status_combo["values"] = new_values
                 status_combo.set(McKessonStatus.REFILLABLE.value)
+                drug_hint.configure(text="(no length limit)")
+            elif pms_type == "Liberty":
+                new_values = [s.value for s in LIBERTY_AVAILABLE_STATUSES]
+                status_combo["values"] = new_values
+                status_combo.set(LibertyStatus.REFILLABLE.value)
                 drug_hint.configure(text="(no length limit)")
             else:
                 new_values = [s.value for s in AVAILABLE_STATUSES]
@@ -738,6 +767,8 @@ class PMSIDataBuilderUI:
             # Parse status based on PMS type
             if pms_type == "McKesson":
                 rx_status = McKessonStatus(status_val)
+            elif pms_type == "Liberty":
+                rx_status = LibertyStatus(status_val)
             else:
                 rx_status = RxStatus(status_val)
 
@@ -783,6 +814,9 @@ class PMSIDataBuilderUI:
             if pms_type == "McKesson":
                 status = McKessonStatus(status_val)
                 label.configure(text=MCKESSON_STATUS_INFO.get(status, ""))
+            elif pms_type == "Liberty":
+                status = LibertyStatus(status_val)
+                label.configure(text=LIBERTY_STATUS_INFO.get(status, ""))
             else:
                 status = RxStatus(status_val)
                 label.configure(text=STATUS_INFO.get(status, ""))
@@ -877,6 +911,21 @@ class PMSIDataBuilderUI:
                     if mck_scenario.rx.not_refillable_reason_code:
                         lines.append(f"      NotRefillCode:  {mck_scenario.rx.not_refillable_reason_code}")
                     lines.append(f"      DEA Class:      {mck_scenario.rx.dea_class}")
+                elif pms_type == "Liberty":
+                    lib_scenario = build_liberty_scenario(
+                        status=status,
+                        rx_number=rx["rx_number"],
+                        patient_first=self.patient_data.get("first_name", "TEST"),
+                        patient_last=self.patient_data.get("last_name", "LIBERTY"),
+                        drug_name=rx["drug_name"],
+                        store_number=self.patient_data.get("store_number", "8174884613"),
+                        include_p360=False,
+                    )
+                    lines.append(f"      ─── Will produce (Liberty/WireMock): ───")
+                    lines.append(f"      Fill StatusCode:  {lib_scenario.rx.last_fill_status_code}")
+                    lines.append(f"      Status.Status:    {lib_scenario.rx.status_status}")
+                    lines.append(f"      LastFill.Status:  {lib_scenario.rx.status_last_fill_status}")
+                    lines.append(f"      Drug Schedule:    {lib_scenario.rx.drug_schedule or '(none)'}")
                 else:
                     scenario = build_scenario(
                         rx_status=status,
@@ -915,6 +964,10 @@ class PMSIDataBuilderUI:
             if pms_type == "McKesson":
                 lines.append(f"  PerSe/RxInfoRsp{rx['rx_number']}.xml")
                 lines.append(f"  PerSe/SubmitIVROrderRsp{rx['rx_number']}.xml")
+            elif pms_type == "Liberty":
+                lines.append(f"  liberty/libertyquery{rx['rx_number']}.json")
+                lines.append(f"  liberty/libertystatus{rx['rx_number']}.json")
+                lines.append(f"  liberty/libertyrefill{rx['rx_number']}.json")
             else:
                 lines.append(f"  PDX/RxResponse{rx['rx_number']}.xml")
                 lines.append(f"  PDX/StatusResponse{rx['rx_number']}.xml")
@@ -966,6 +1019,35 @@ class PMSIDataBuilderUI:
                     # Upload to simulator
                     upload_mckesson_scenario(scenario, upload_p360=False)
                     results.append(f"✅ RX# {rx_data['rx_number']} → {rx_data['rx_status'].value} (McKesson)")
+
+                    # Upload P360 if enabled
+                    if self.enable_p360.get() and HAS_P360 and scenario.p360_patient:
+                        ensure_patient_with_rx(scenario.p360_patient)
+                        results.append(f"   ✅ P360 prescription merged")
+
+                    self.scenarios.append(scenario)
+
+                elif pms_type == "Liberty":
+                    scenario = build_liberty_scenario(
+                        status=rx_data["rx_status"],
+                        rx_number=rx_data["rx_number"],
+                        patient_first=self.patient_data.get("first_name", "TEST"),
+                        patient_last=self.patient_data.get("last_name", "LIBERTY"),
+                        patient_phone=self.patient_data.get("phone", "5550561001"),
+                        patient_dob=self.patient_data.get("dob", "19850115"),
+                        drug_name=rx_data["drug_name"],
+                        store_number=self.patient_data.get("store_number", "8174884613"),
+                        client_id=int(self.patient_data.get("client_id", "9001")),
+                        copay=rx_data.get("copay", 10.0),
+                        days_supply=rx_data.get("days_supply", 30),
+                        refills_remaining=rx_data.get("refills_remaining", 4),
+                        refills_authorized=rx_data.get("authorized_refills", 5),
+                        include_p360=self.enable_p360.get() and HAS_P360,
+                    )
+
+                    # Upload JSON to WireMock
+                    upload_liberty_scenario(scenario, upload_p360=False)
+                    results.append(f"✅ RX# {rx_data['rx_number']} → {rx_data['rx_status'].value} (Liberty)")
 
                     # Upload P360 if enabled
                     if self.enable_p360.get() and HAS_P360 and scenario.p360_patient:
@@ -1122,7 +1204,7 @@ class PMSIDataBuilderUI:
         serialized_rxs = []
         for rx in self.prescriptions:
             rx_copy = dict(rx)
-            rx_copy["rx_status"] = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus)) else rx["rx_status"]
+            rx_copy["rx_status"] = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus, LibertyStatus)) else rx["rx_status"]
             serialized_rxs.append(rx_copy)
 
         scenario_data = {
@@ -1167,8 +1249,14 @@ class PMSIDataBuilderUI:
             rx_copy = dict(rx)
             # Deserialize status string → enum
             if isinstance(rx_copy.get("rx_status"), str):
+                pms_type = rx_copy.get("pms_type", "PDX")
                 try:
-                    rx_copy["rx_status"] = RxStatus(rx_copy["rx_status"])
+                    if pms_type == "McKesson":
+                        rx_copy["rx_status"] = McKessonStatus(rx_copy["rx_status"])
+                    elif pms_type == "Liberty":
+                        rx_copy["rx_status"] = LibertyStatus(rx_copy["rx_status"])
+                    else:
+                        rx_copy["rx_status"] = RxStatus(rx_copy["rx_status"])
                 except ValueError:
                     rx_copy["rx_status"] = RxStatus.REFILLABLE
             self.prescriptions.append(rx_copy)
