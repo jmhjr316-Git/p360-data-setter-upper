@@ -3013,3 +3013,474 @@ def switch_pms_type(client_id: int, pms_type: str, channel_id: int = 2) -> dict:
         "ateb": ateb_config,
         "channel_config": channel_result,
     }
+
+
+# =============================================================================
+# PDX 275 (SOCKET) PMS BUILDER
+# =============================================================================
+# PDX 275 uses fixed-width text records in a flat file read by a socket-based
+# simulator (ATEBfsisim). Three record types per Rx: QRY, UPD, CHK.
+# Upload: append to or rewrite fsisimdata_pdxs_v275 via manage.jsp ?base=legacy
+# =============================================================================
+
+# PDX 275 SIM file path
+PDX275_DATA_FILE = "fsisimdata_pdxs_v275"
+PDX275_SIM_URL = "https://pmssim.pc.q.awscloud.private/FsiXmlSimulator/manage.jsp"
+
+
+class Pdx275Status(str, Enum):
+    """PDX 275 statuses that the builder can produce."""
+    READY_FOR_PICKUP = "READY_FOR_PICKUP"
+    IN_QUEUE = "IN_QUEUE"
+    WAITING_FOR_PRESCRIBER = "WAITING_FOR_PRESCRIBER"
+    REFILLABLE = "REFILLABLE"
+    RX_PICKED_UP = "RX_PICKED_UP"
+    CONTROLLED_SUBSTANCE = "CONTROLLED_SUBSTANCE"
+    TRANSFERRED = "TRANSFERRED"
+    DEACTIVATED = "DEACTIVATED"
+    NOT_REFILLABLE = "NOT_REFILLABLE"
+
+
+@dataclass
+class Pdx275Rx:
+    """Represents a PDX 275 prescription with all fixed-width fields."""
+    rx_number: str
+    store_number: str = "01"
+    patient_first: str = "TEST"
+    patient_last: str = "PATIENT"
+    patient_phone: str = "5550561001"
+    patient_dob: str = "19850115"  # YYYYMMDD
+    drug_name: str = "LISINOPRIL 10MG TAB"
+    drug_ndc: str = "00591073101"
+    drug_schedule: str = "L"  # L=non-controlled, 2=CII, 3=CIII, etc.
+    prescriber_name: str = "Smith, John"
+    prescriber_phone: str = "5551234567"
+    # Rx details
+    refills_remaining_flag: str = "Y"  # Y=has refills, N=no refills, P=partial
+    refills_remaining_count: str = "03"  # 2-digit count
+    expiration_date: str = ""  # YYYYMMDD
+    last_fill_date: str = ""  # YYYYMMDD
+    first_fill_date: str = ""  # YYYYMMDD
+    days_supply: str = "030"  # 3-digit
+    orig_refills: str = "005"  # 3-digit
+    last_fill_qty: str = "00030"  # 5-digit
+    qty_remaining: str = "00030"  # 5-digit
+    orig_fill_qty: str = "00030"  # 5-digit
+    copay: str = "00000001000"  # 11-digit (cents)
+    # Status fields
+    qry_status: str = "F"  # F=OK, T=Transferred, D=Deactivated, Z=Controlled, N=NotFound
+    chk_status: str = "P"  # N=InQueue, F=ReadyForPickup, D=WaitingForPrescriber, P=PickedUp
+    upd_status: str = "A"  # A=Accepted, R=Accepted
+
+
+@dataclass
+class Pdx275Scenario:
+    """A complete PDX 275 test scenario."""
+    rx: Pdx275Rx
+    qry_block: str  # QRY record block
+    upd_block: str  # UPD record block
+    chk_block: str  # CHK record block
+    p360_patient: dict | None = None
+
+
+def build_pdx275_scenario(
+    status: Pdx275Status,
+    rx_number: str,
+    store_number: str = "01",
+    patient_first: str = "STATUS",
+    patient_last: str = "TESTPATIENT",
+    patient_phone: str = "5550561001",
+    patient_dob: str = "19850115",
+    drug_name: str = "LISINOPRIL 10MG TAB",
+    drug_ndc: str = "00591073101",
+    client_id: int = 8000,
+    copay: float = 10.0,
+    days_supply: int = 30,
+    refills_remaining: int = 3,
+    include_p360: bool = True,
+) -> Pdx275Scenario:
+    """Build a PDX 275 scenario that will resolve to the desired status."""
+    now = datetime.now()
+
+    # Defaults
+    qry_status = "F"  # OK
+    chk_status = "P"  # PICKED_UP
+    upd_status = "A"  # Accepted
+    drug_schedule = "L"  # non-controlled
+    refills_flag = "Y"
+    refills_count = f"{refills_remaining:02d}"
+
+    if status == Pdx275Status.READY_FOR_PICKUP:
+        chk_status = "F"
+        fill_date = now - timedelta(days=1)
+
+    elif status == Pdx275Status.IN_QUEUE:
+        chk_status = "N"
+        fill_date = now - timedelta(days=1)
+
+    elif status == Pdx275Status.WAITING_FOR_PRESCRIBER:
+        chk_status = "D"
+        fill_date = now - timedelta(days=5)
+
+    elif status == Pdx275Status.REFILLABLE:
+        chk_status = "P"
+        fill_date = now - timedelta(days=days_supply + 10)
+
+    elif status == Pdx275Status.RX_PICKED_UP:
+        chk_status = "P"
+        fill_date = now - timedelta(days=2)
+
+    elif status == Pdx275Status.CONTROLLED_SUBSTANCE:
+        qry_status = "Z"
+        chk_status = "P"
+        drug_schedule = "2"
+        fill_date = now - timedelta(days=days_supply + 10)
+
+    elif status == Pdx275Status.TRANSFERRED:
+        qry_status = "T"
+        chk_status = "P"
+        fill_date = now - timedelta(days=30)
+
+    elif status == Pdx275Status.DEACTIVATED:
+        qry_status = "D"
+        chk_status = "P"
+        fill_date = now - timedelta(days=30)
+
+    elif status == Pdx275Status.NOT_REFILLABLE:
+        refills_flag = "N"
+        refills_count = "00"
+        refills_remaining = 0
+        chk_status = "P"
+        fill_date = now - timedelta(days=30)
+
+    else:
+        raise ValueError(f"Unsupported PDX 275 status: {status}")
+
+    exp_date = (now + timedelta(days=365)).strftime("%Y%m%d")
+    last_fill = fill_date.strftime("%Y%m%d")
+    first_fill = (fill_date - timedelta(days=180)).strftime("%Y%m%d")
+    copay_cents = f"{int(copay * 100):011d}"
+
+    rx = Pdx275Rx(
+        rx_number=rx_number,
+        store_number=store_number,
+        patient_first=patient_first,
+        patient_last=patient_last,
+        patient_phone=patient_phone,
+        patient_dob=patient_dob,
+        drug_name=drug_name,
+        drug_ndc=drug_ndc,
+        drug_schedule=drug_schedule,
+        prescriber_name=f"{patient_last[:14]}, {patient_first[:12]}",
+        prescriber_phone="5551234567",
+        refills_remaining_flag=refills_flag,
+        refills_remaining_count=refills_count,
+        expiration_date=exp_date,
+        last_fill_date=last_fill,
+        first_fill_date=first_fill,
+        days_supply=f"{days_supply:03d}",
+        orig_refills=f"{refills_remaining + 2:03d}",
+        last_fill_qty=f"{days_supply:05d}",
+        qty_remaining=f"{days_supply * refills_remaining:05d}",
+        orig_fill_qty=f"{days_supply:05d}",
+        copay=copay_cents,
+        qry_status=qry_status,
+        chk_status=chk_status,
+        upd_status=upd_status,
+    )
+
+    qry_block = _build_pdx275_qry(rx)
+    upd_block = _build_pdx275_upd(rx)
+    chk_block = _build_pdx275_chk(rx)
+
+    p360_patient = None
+    if include_p360:
+        p360_patient = _build_p360_patient(
+            patient_first=patient_first,
+            patient_last=patient_last,
+            patient_phone=patient_phone,
+            patient_dob=patient_dob,
+            rx_number=rx_number,
+            drug_name=drug_name,
+            days_supply=days_supply,
+            store_number=store_number,
+            client_id=client_id,
+        )
+
+    return Pdx275Scenario(rx=rx, qry_block=qry_block, upd_block=upd_block, chk_block=chk_block, p360_patient=p360_patient)
+
+
+def _ljust(val: str, length: int) -> str:
+    """Left-justify and pad/truncate to exact length."""
+    return val[:length].ljust(length)
+
+
+def _rjust(val: str, length: int, pad: str = "0") -> str:
+    """Right-justify and pad/truncate to exact length."""
+    return val[:length].rjust(length, pad)
+
+
+def _build_pdx275_qry(rx: Pdx275Rx) -> str:
+    """Build the QRY (INFO) record block for PDX 275."""
+    # Header (25 chars): bytecount(4) + R + 275 + RQ + trace(10) + count(5)
+    hdr = f"9999R275RQ{'':10s}00001"
+
+    # Part 01 (22 chars): rx_number(10) + store_number(12)
+    pt01 = f"{_ljust(rx.rx_number, 10)}{_ljust(rx.store_number, 12)}"
+
+    # Part 02 (69 chars): refills + dates + quantities + status
+    # refills_remain(1) + refills_count(2) + exp_date(8) + last_fill(8) + first_fill(8) +
+    # days_supply(3) + orig_refills(3) + last_fill_qty(5) + qty_remaining(5) + orig_fill_qty(5) +
+    # reserved(1) + last_fill_price(6) + reassigned_rx(10) + status(1) + refills_in_queue(3)
+    pt02 = (
+        f"{rx.refills_remaining_flag}"
+        f"{rx.refills_remaining_count}"
+        f"{rx.expiration_date}"
+        f"{rx.last_fill_date}"
+        f"{rx.first_fill_date}"
+        f"{rx.days_supply}"
+        f"{rx.orig_refills}"
+        f"{rx.last_fill_qty}"
+        f"{_ljust('', 5)}"  # qty_remaining (spaces = use last_fill_qty)
+        f"{rx.orig_fill_qty}"
+        f"{' '}"  # reserved
+        f"{_rjust(rx.copay[:6], 6)}"  # last_fill_price (6 chars from copay)
+        f"{_ljust('', 10)}"  # reassigned_rx_number
+        f"{rx.qry_status}"
+        f"{_ljust('', 3)}"  # refills_in_queue
+    )
+
+    # Part 03 (60 chars): sig_text[0:60]
+    sig = "Take one tablet by mouth daily"
+    pt03 = _ljust(sig[:60], 60)
+
+    # Part 04 (56 chars): sig_text[60:116]
+    pt04 = _ljust(sig[60:116] if len(sig) > 60 else "", 56)
+
+    # Part 05 (10 chars): autofill(1) + option_date(8) + no_refill_option(1)
+    pt05 = f"0{'':8s}D"
+
+    # Part 06a (86 chars): ssn(9) + pin(10) + name(28) + dob(8) + gender(1) + phones(30)
+    name_field = f"{rx.patient_last}, {rx.patient_first}"
+    pt06a = (
+        f"{_ljust('', 9)}"  # ssn (blank)
+        f"{_ljust('', 10)}"  # pin
+        f"{_ljust(name_field, 28)}"
+        f"{rx.patient_dob}"
+        f"1"  # gender (1=M)
+        f"{_ljust(rx.patient_phone, 10)}"  # primary phone
+        f"{_ljust('', 10)}"  # work phone
+        f"{_ljust('', 10)}"  # mobile phone
+    )
+
+    # Part 06b (76 chars): email
+    pt06b = _ljust("", 76)
+
+    # Part 07 (91 chars): address(30) + city(20) + state(2) + zip(9) + lang(1) + dl(15) + misc(14)
+    pt07 = (
+        f"{_ljust('123 Test St', 30)}"
+        f"{_ljust('Testville', 20)}"
+        f"NC"
+        f"{_ljust('27601', 9)}"
+        f"{_ljust('', 1)}"  # language (blank=English)
+        f"{_ljust('', 15)}"  # DL
+        f"{'N'}"  # store_charge_account
+        f"{'3'}"  # safety caps / out_dial
+        f"{_ljust('', 12)}"  # remaining reserved
+    )
+
+    # Part 08 (89 chars): drug_name(30) + ndc(11) + schedule(1) + manufacturer(35) + qty_onhand(6) + therapy_class(6)
+    pt08 = (
+        f"{_ljust(rx.drug_name, 30)}"
+        f"{_ljust(rx.drug_ndc, 11)}"
+        f"{rx.drug_schedule}"
+        f"{_ljust('Generic Pharma', 35)}"
+        f"{_rjust('', 6, ' ')}"  # qty_on_hand
+        f"{_ljust('', 6)}"  # therapeutic_class
+    )
+
+    # Part 09 (15 chars): reserved
+    pt09 = _ljust("", 15)
+
+    # Part 10 (48 chars): doc_name(28) + doc_phone(10) + doc_fax(10)
+    pt10 = (
+        f"{_ljust('Smith, John', 28)}"
+        f"{_ljust(rx.prescriber_phone, 10)}"
+        f"{_ljust('5551234568', 10)}"
+    )
+
+    # Part 11 (61 chars): doc_address(30) + doc_city(20) + doc_state(2) + doc_zip(9)
+    pt11 = (
+        f"{_ljust('456 Medical Dr', 30)}"
+        f"{_ljust('Testville', 20)}"
+        f"NC"
+        f"{_ljust('27601', 9)}"
+    )
+
+    # Part 12 (86 chars): carrier/plan IDs + copay
+    # prim_carrier(10) + prim_plan(15) + sec_carrier(10) + sec_plan(15) + tert_carrier(10) + tert_plan(15) + copay(11)
+    pt12 = (
+        f"{_ljust('', 10)}"  # primary carrier
+        f"{_ljust('', 15)}"  # primary plan
+        f"{_ljust('', 10)}"  # secondary carrier
+        f"{_ljust('', 15)}"  # secondary plan
+        f"{_ljust('', 10)}"  # tertiary carrier
+        f"{_ljust('', 15)}"  # tertiary plan
+        f"{rx.copay}"  # final copay (11 chars)
+    )
+
+    lines = [
+        f'QRY            FSIKEY={rx.rx_number}',
+        f'"{hdr}"',
+        f'"{pt01}"',
+        f'"{pt02}"',
+        f'"{pt03}"',
+        f'"{pt04}"',
+        f'"{pt05}"',
+        f'"{pt06a}"',
+        f'"{pt06b}"',
+        f'"{pt07}"',
+        f'"{pt08}"',
+        f'"{pt09}"',
+        f'"{pt10}"',
+        f'"{pt11}"',
+        f'"{pt12}"',
+    ]
+    return "\n".join(lines)
+
+
+def _build_pdx275_upd(rx: Pdx275Rx) -> str:
+    """Build the UPD (refill response) record block for PDX 275."""
+    hdr = f"9999R275RR{'':10s}00001"
+    # body: rx_number(10) + store_number(12) + status(1) + status_code(1)
+    body = f"{_ljust(rx.rx_number, 10)}{_ljust(rx.store_number, 12)}{rx.upd_status} "
+
+    lines = [
+        f'UPD            FSIKEY={rx.rx_number}',
+        f'"{hdr}"',
+        f'"{body}"',
+    ]
+    return "\n".join(lines)
+
+
+def _build_pdx275_chk(rx: Pdx275Rx) -> str:
+    """Build the CHK (status check) record block for PDX 275."""
+    hdr = f"9999S275SR{'':10s}00001"
+    # body: rx_number(10) + store_number(12) + ssn(10) + status(1)
+    body = f"{_ljust(rx.rx_number, 10)}{_ljust(rx.store_number, 12)}{_ljust('', 10)}{rx.chk_status}"
+
+    lines = [
+        f'CHK            FSIKEY={rx.rx_number}',
+        f'"{hdr}"',
+        f'"{body}"',
+    ]
+    return "\n".join(lines)
+
+
+def upload_pdx275_rx(scenario: Pdx275Scenario) -> None:
+    """Upload a PDX 275 rx by appending to the data file via manage.jsp."""
+    import requests
+    import urllib.parse
+
+    # Build the full block (QRY + separator + UPD + separator + CHK)
+    separator = "#" + "-" * 100
+    content = f"\n{scenario.qry_block}\n{separator}\n{scenario.upd_block}\n{separator}\n{scenario.chk_block}\n"
+
+    encoded = urllib.parse.quote(content)
+    url = f"{PDX275_SIM_URL}?action=append&base=legacy&file_path={PDX275_DATA_FILE}&content={encoded}"
+    resp = requests.get(url, verify=False, timeout=10)
+    if resp.status_code != 200 or "success" not in resp.text:
+        raise RuntimeError(f"Failed to append PDX 275 data: {resp.text}")
+
+
+def delete_pdx275_rx(rx_number: str) -> None:
+    """Remove a PDX 275 rx from the data file (read, filter, write back via POST)."""
+    import requests
+
+    # Read current file
+    url = f"{PDX275_SIM_URL}?action=read&base=legacy&file_path={PDX275_DATA_FILE}"
+    resp = requests.get(url, verify=False, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to read PDX 275 file: {resp.status_code}")
+
+    content = resp.text
+    lines = content.split("\n")
+
+    # Filter out all blocks with this FSIKEY
+    filtered = []
+    skip = False
+    for line in lines:
+        if f"FSIKEY={rx_number}" in line:
+            skip = True
+            # Also remove preceding separator if present
+            if filtered and filtered[-1].startswith("#---"):
+                filtered.pop()
+            continue
+        if skip:
+            # Skip until next FSIKEY line or separator+FSIKEY
+            if line.startswith(("QRY", "UPD", "CHK", "AFR", "AFL", "AFP")) and f"FSIKEY={rx_number}" not in line:
+                skip = False
+                filtered.append(line)
+            elif line.startswith("#---"):
+                skip = False
+                filtered.append(line)
+            # else: skip this line (part of the removed block)
+        else:
+            filtered.append(line)
+
+    # Write back via POST
+    new_content = "\n".join(filtered)
+    url = f"{PDX275_SIM_URL}?action=write&base=legacy&file_path={PDX275_DATA_FILE}"
+    resp = requests.post(url, data={"content": new_content}, verify=False, timeout=30)
+    if resp.status_code != 200 or "success" not in resp.text:
+        raise RuntimeError(f"Failed to write PDX 275 file: {resp.text}")
+
+
+def upload_pdx275_scenario(scenario: Pdx275Scenario, upload_p360: bool = True) -> None:
+    """Upload all data for a PDX 275 scenario."""
+    upload_pdx275_rx(scenario)
+    if upload_p360 and scenario.p360_patient:
+        _upsert_p360_patient(scenario.p360_patient)
+
+
+def delete_pdx275_scenario(scenario: Pdx275Scenario, delete_p360: bool = False) -> None:
+    """Delete all data for a PDX 275 scenario."""
+    delete_pdx275_rx(scenario.rx.rx_number)
+    if delete_p360 and scenario.p360_patient:
+        _delete_p360_patient(scenario.p360_patient)
+
+
+# --- PDX 275 convenience one-liners ---
+
+def create_pdx275_ready_for_pickup(rx_number: str, **kwargs) -> Pdx275Scenario:
+    scenario = build_pdx275_scenario(status=Pdx275Status.READY_FOR_PICKUP, rx_number=rx_number, **kwargs)
+    upload_pdx275_scenario(scenario)
+    return scenario
+
+
+def create_pdx275_in_queue(rx_number: str, **kwargs) -> Pdx275Scenario:
+    scenario = build_pdx275_scenario(status=Pdx275Status.IN_QUEUE, rx_number=rx_number, **kwargs)
+    upload_pdx275_scenario(scenario)
+    return scenario
+
+
+def create_pdx275_refillable(rx_number: str, **kwargs) -> Pdx275Scenario:
+    scenario = build_pdx275_scenario(status=Pdx275Status.REFILLABLE, rx_number=rx_number, **kwargs)
+    upload_pdx275_scenario(scenario)
+    return scenario
+
+
+def create_pdx275_picked_up(rx_number: str, **kwargs) -> Pdx275Scenario:
+    scenario = build_pdx275_scenario(status=Pdx275Status.RX_PICKED_UP, rx_number=rx_number, **kwargs)
+    upload_pdx275_scenario(scenario)
+    return scenario
+
+
+def create_pdx275_controlled(rx_number: str, **kwargs) -> Pdx275Scenario:
+    scenario = build_pdx275_scenario(status=Pdx275Status.CONTROLLED_SUBSTANCE, rx_number=rx_number, **kwargs)
+    upload_pdx275_scenario(scenario)
+    return scenario
+
+
+# List of PDX 275 statuses available for the UI
+PDX275_AVAILABLE_STATUSES = list(Pdx275Status)
