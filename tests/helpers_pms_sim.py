@@ -650,54 +650,83 @@ _STATUS_RECIPES: dict[RxStatus, dict[str, Any]] = {
 
 
 def _build_p360_patient(
-    rx: SimRx,
-    rx_status: RxStatus,
-    client_id: int,
-    store_id: int,
-    store_npi: str,
-    patient_dob: str,
+    rx: "SimRx | None" = None,
+    rx_status: "RxStatus | None" = None,
+    client_id: int = 9001,
+    store_id: int = 9001,
+    store_npi: str = "1821516543",
+    patient_dob: str = "19850101",
+    # Alternative kwargs for non-PDX builders:
+    patient_first: str = "",
+    patient_last: str = "",
+    patient_phone: str = "",
+    rx_number: str = "",
+    drug_name: str = "",
+    drug_ndc: str = "",
+    days_supply: int = 30,
+    fill_date: str = "",
+    store_number: str = "",
+    ateb_patient_id: int | str = 0,
+    refills_remaining: int = 3,
+    authorized_refills: int = 5,
 ) -> dict[str, Any]:
     """Build a P360 patient document matching the sim Rx data.
 
-    Document format matches what the personalization engine expects:
-    - search field with lastNameUpper/firstNameUpper/dob/phoneNumber
-    - orgs with e360OrgId/e360StoreId
-    - mdfcode ACTIVE
-    - patientStatus 0
+    Can be called two ways:
+    1. PDX path: pass rx=SimRx object (original behavior)
+    2. Generic path: pass individual kwargs (Liberty/Epic/McKesson/PDX275/AtebGen)
 
-    IMPORTANT field distinctions:
-    - storeId = OPE store ID (from orgContext URN, e.g., 9001 for urn:OPE-STORE:9001)
-    - storeNpi = pharmacy NPI (e.g., "1821516543" for client 9001)
-    - pmsStoreNumber (rx.store_number) = what goes in XML <storeNumber> for sim lookup
-      These are DIFFERENT values and must not be conflated.
+    CRITICAL: The NDC, fill date, and patient ID in this document MUST match
+    what the PMS simulator returns, or personalization will fail.
     """
+    # Extract values from SimRx if provided (PDX path)
+    if rx is not None:
+        patient_first = patient_first or rx.patient_first
+        patient_last = patient_last or rx.patient_last
+        patient_phone = patient_phone or rx.patient_phone
+        rx_number = rx_number or rx.rx_number
+        drug_name = drug_name or rx.drug_name
+        drug_ndc = drug_ndc or getattr(rx, 'drug_ndc', '') or "00093007101"
+        days_supply = days_supply or rx.days_supply
+        if not fill_date and hasattr(rx, 'last_fill_date') and rx.last_fill_date:
+            fill_date = rx.last_fill_date[:10].replace("-", "")
+        if not ateb_patient_id:
+            ateb_patient_id = int(rx.rx_number) if rx.rx_number.isdigit() else 99001
+        refills_remaining = getattr(rx, 'refills_remaining', refills_remaining)
+        authorized_refills = getattr(rx, 'authorized_refills', authorized_refills)
+
+    # Defaults for generic path
+    if not drug_ndc:
+        drug_ndc = "00093007101"
+    if not ateb_patient_id:
+        ateb_patient_id = int(rx_number) if rx_number.isdigit() else 99001
+    if not fill_date:
+        fill_date = datetime.now().strftime("%Y%m%d")
+
     # Normalize DOB to YYYYMMDD for P360
     dob_p360 = _normalize_dob_to_p360(patient_dob)
 
-    # Determine fill date in YYYYMMDD format for P360
-    if rx.last_fill_date:
-        fill_date_p360 = rx.last_fill_date[:10].replace("-", "")
-    else:
-        fill_date_p360 = datetime.now().strftime("%Y%m%d")
+    # Normalize fill_date to YYYYMMDD
+    fill_date_p360 = fill_date.replace("-", "")[:8]
 
     return {
         "clientId": client_id,
         "storeId": store_id,
         "storeNpi": store_npi,
-        "atebPatientId": int(rx.rx_number) if rx.rx_number.isdigit() else 99001,
+        "atebPatientId": int(ateb_patient_id) if str(ateb_patient_id).isdigit() else 99001,
         "dateOfBirth": dob_p360,
         "name": {
-            "firstName": rx.patient_first,
-            "lastName": rx.patient_last,
+            "firstName": patient_first,
+            "lastName": patient_last,
         },
         "phone": {
-            "primary": rx.patient_phone,
+            "primary": patient_phone,
         },
         "search": {
-            "lastNameUpper": rx.patient_last.upper(),
-            "firstNameUpper": rx.patient_first.upper(),
+            "lastNameUpper": patient_last.upper(),
+            "firstNameUpper": patient_first.upper(),
             "dob": dob_p360,
-            "phoneNumber": rx.patient_phone,
+            "phoneNumber": patient_phone,
         },
         "orgs": [
             {
@@ -710,15 +739,15 @@ def _build_p360_patient(
         "prescriptions": [
             {
                 "medication": {
-                    "medicationName": rx.drug_name,
+                    "medicationName": drug_name,
                     "gpi": "27100010000310",
-                    "ndc": "00093007101",
+                    "ndc": drug_ndc,
                 },
-                "rxNum": rx.rx_number,
+                "rxNum": rx_number,
                 "fillDate": fill_date_p360,
-                "daysSupply": rx.days_supply,
-                "refillsRemaining": rx.refills_remaining,
-                "originalRefillsAuth": rx.authorized_refills,
+                "daysSupply": days_supply,
+                "refillsRemaining": refills_remaining,
+                "originalRefillsAuth": authorized_refills,
                 "rxStatus": "OPEN",
             }
         ],
@@ -1878,7 +1907,9 @@ def build_liberty_scenario(
             patient_dob=patient_dob,
             rx_number=rx_number,
             drug_name=drug_name,
+            drug_ndc=rx.drug_ndc,
             days_supply=days_supply,
+            fill_date=rx.last_fill_date,
             store_number=store_number,
             client_id=client_id,
         )
@@ -2468,7 +2499,9 @@ def build_epic_scenario(
             patient_dob=patient_dob,
             rx_number=rx_number,
             drug_name=drug_name,
+            drug_ndc=rx.drug_ndc,
             days_supply=days_supply,
+            fill_date=rx.filled_on[:10] if rx.filled_on else "",
             store_number=store_number,
             client_id=client_id,
         )
@@ -3223,7 +3256,9 @@ def build_pdx275_scenario(
             patient_dob=patient_dob,
             rx_number=rx_number,
             drug_name=drug_name,
+            drug_ndc=rx.drug_ndc,
             days_supply=days_supply,
+            fill_date=rx.last_fill_date,
             store_number=store_number,
             client_id=client_id,
         )
@@ -3710,7 +3745,9 @@ def build_atebgen_scenario(
             patient_dob=patient_dob,
             rx_number=rx_number,
             drug_name=drug_name,
+            drug_ndc=rx.drug_ndc,
             days_supply=days_supply,
+            fill_date=rx.last_fill_date,
             store_number=store_number,
             client_id=client_id,
         )
