@@ -36,7 +36,47 @@ P360_URI = (
 P360_DB = "p360_daily_docker"
 P360_COLLECTION = "patient"
 
+# Environment presets
+P360_ENVIRONMENTS = {
+    "qa": {
+        "uri": (
+            "mongodb://docdb_admin:P360DocumentDockerCopy0507"
+            "@p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017"
+            "/?ssl=true&retryWrites=false&tlsAllowInvalidCertificates=true"
+            "&authSource=admin&authMechanism=SCRAM-SHA-1"
+        ),
+        "db": "p360_daily_docker",
+    },
+    "staging": {
+        "uri": (
+            "mongodb://svc_krc:8gT%211c.J"
+            "@p360-document-db-stg.cluster-c8ynciexdc7u.us-east-2.docdb.amazonaws.com:27017"
+            "/p360?ssl=true&retryWrites=false&tlsAllowInvalidCertificates=true"
+            "&authSource=admin&authMechanism=SCRAM-SHA-1"
+        ),
+        "db": "p360",
+    },
+}
+
 _client: pymongo.MongoClient | None = None
+
+
+def set_environment(env: str) -> None:
+    """Switch P360 target environment. Valid values: 'qa', 'staging'.
+
+    Closes any existing connection and updates URI/DB for subsequent calls.
+    """
+    global P360_URI, P360_DB, _client
+    env = env.lower().strip()
+    if env not in P360_ENVIRONMENTS:
+        raise ValueError(f"Unknown environment '{env}'. Valid: {list(P360_ENVIRONMENTS.keys())}")
+    # Close existing connection if switching
+    if _client:
+        _client.close()
+        _client = None
+    cfg = P360_ENVIRONMENTS[env]
+    P360_URI = cfg["uri"]
+    P360_DB = cfg["db"]
 
 
 def _get_client() -> pymongo.MongoClient:
