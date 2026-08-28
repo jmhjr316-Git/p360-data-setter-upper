@@ -90,7 +90,39 @@ logger = logging.getLogger(__name__)
 
 SIM_BASE_URL = "https://pmssim.pc.q.awscloud.private/FsiXmlSimulator/manage.jsp"
 SIM_HOST_HEADER = ""  # Set when using IP-based access (e.g., staging via Kong IP)
+WIREMOCK_BASE_URL_OVERRIDE = ""  # Set for staging WireMock if different
 DEFAULT_STORE_NUMBER = "70050001"  # QA store number for client 8000 (pmsStoreNumber for XML)
+
+# Environment presets
+ENVIRONMENTS = {
+    "qa": {
+        "sim_base_url": "https://pmssim.pc.q.awscloud.private/FsiXmlSimulator/manage.jsp",
+        "sim_host_header": "",
+        "wiremock_base_url": "https://ivr-mock-svcs.pc.q.awscloud.private",
+    },
+    "staging": {
+        "sim_base_url": "https://10.13.60.40/FsiXmlSimulator/manage.jsp",
+        "sim_host_header": "pmssim-ocp-sit.k8s.raleng.omnicell.com",
+        "wiremock_base_url": "",  # TODO: staging wiremock URL when available
+    },
+}
+
+
+def set_environment(env: str) -> None:
+    """Switch target environment. Valid values: 'qa', 'staging'.
+
+    This sets the module-level URL/header globals so all subsequent
+    upload/delete/list calls target the correct environment.
+    """
+    global SIM_BASE_URL, SIM_HOST_HEADER, WIREMOCK_BASE_URL, WIREMOCK_BASE_URL_OVERRIDE
+    env = env.lower().strip()
+    if env not in ENVIRONMENTS:
+        raise ValueError(f"Unknown environment '{env}'. Valid: {list(ENVIRONMENTS.keys())}")
+    cfg = ENVIRONMENTS[env]
+    SIM_BASE_URL = cfg["sim_base_url"]
+    SIM_HOST_HEADER = cfg["sim_host_header"]
+    if cfg["wiremock_base_url"]:
+        WIREMOCK_BASE_URL = cfg["wiremock_base_url"]
 
 
 def _sim_headers() -> dict:
