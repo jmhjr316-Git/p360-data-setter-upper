@@ -672,6 +672,8 @@ class PMSIDataBuilderUI:
 
         status_name = rx["rx_status"].value if isinstance(rx["rx_status"], (RxStatus, McKessonStatus, LibertyStatus, EpicStatus, Pdx275Status, AtebGenStatus)) else rx["rx_status"]
         info = f"{rx['drug_name']}  |  Status: {status_name}  |  Copay: ${rx.get('copay', 10.0):.2f}"
+        if rx.get("cc_last4"):
+            info += f"  |  💳 *{rx['cc_last4']} exp {rx.get('cc_exp', '')}"
         ttk.Label(card, text=info, font=("Segoe UI", 10)).pack(side=LEFT)
 
         btn_frame = ttk.Frame(card)
@@ -691,7 +693,7 @@ class PMSIDataBuilderUI:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Prescription" if editing else "Add Prescription")
-        dialog.geometry("650x580")
+        dialog.geometry("650x760")
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -751,6 +753,11 @@ class PMSIDataBuilderUI:
         # Wire PMS type change to update status dropdown
         def on_pms_type_change(event=None):
             pms_type = pms_type_combo.get()
+            # Show credit-card section only for McKesson
+            if pms_type == "McKesson":
+                cc_frame.pack(fill=X, pady=(8, 4))
+            else:
+                cc_frame.pack_forget()
             if pms_type == "McKesson":
                 new_values = [s.value for s in MCKESSON_AVAILABLE_STATUSES]
                 status_combo["values"] = new_values
@@ -842,9 +849,61 @@ class PMSIDataBuilderUI:
         sig_entry.pack(side=LEFT, fill=X, expand=YES)
         fields["sig_text"] = sig_entry
 
+        # ── Credit Card (McKesson only — Home Delivery / payment flows, PC-29566) ──
+        cc_frame = ttk.LabelFrame(content, text="Credit Card (McKesson only)", padding=8)
+        # packed/unpacked dynamically by on_pms_type_change
+
+        cc_enable_var = tk.BooleanVar(value=bool(existing.get("cc_last4")))
+        cc_row0 = ttk.Frame(cc_frame)
+        cc_row0.pack(fill=X, pady=2)
+        cc_enable_check = ttk.Checkbutton(
+            cc_row0, text="Include a default credit card on file", variable=cc_enable_var
+        )
+        cc_enable_check.pack(side=LEFT)
+        fields["cc_enable"] = cc_enable_var
+
+        cc_row1 = ttk.Frame(cc_frame)
+        cc_row1.pack(fill=X, pady=2)
+        ttk.Label(cc_row1, text="Last 4 digits:", width=22, anchor=W).pack(side=LEFT)
+        cc_last4_entry = ttk.Entry(cc_row1, width=10)
+        cc_last4_entry.insert(0, existing.get("cc_last4", "4444"))
+        cc_last4_entry.pack(side=LEFT)
+        ttk.Label(cc_row1, text="(exactly 4 digits)", foreground="gray", font=("Segoe UI", 8)).pack(side=LEFT, padx=8)
+        fields["cc_last4"] = cc_last4_entry
+
+        cc_row2 = ttk.Frame(cc_frame)
+        cc_row2.pack(fill=X, pady=2)
+        ttk.Label(cc_row2, text="Expiration (MM/YYYY):", width=22, anchor=W).pack(side=LEFT)
+        cc_exp_entry = ttk.Entry(cc_row2, width=12)
+        cc_exp_entry.insert(0, existing.get("cc_exp", "12/2030"))
+        cc_exp_entry.pack(side=LEFT)
+        ttk.Label(cc_row2, text="(past date = expired-card test)", foreground="gray", font=("Segoe UI", 8)).pack(side=LEFT, padx=8)
+        fields["cc_exp"] = cc_exp_entry
+
+        cc_row3 = ttk.Frame(cc_frame)
+        cc_row3.pack(fill=X, pady=2)
+        ttk.Label(cc_row3, text="Card Type:", width=22, anchor=W).pack(side=LEFT)
+        # XSD enum: VC=Visa, MC=Mastercard, AE=Amex, DC=Discover, UC=Uncategorized
+        cc_type_combo = ttk.Combobox(
+            cc_row3,
+            values=["VC (Visa)", "MC (Mastercard)", "AE (Amex)", "DC (Discover)", "UC (Uncategorized)"],
+            state="readonly", width=20,
+        )
+        _cc_type_map_display = {
+            "VC": "VC (Visa)", "MC": "MC (Mastercard)", "AE": "AE (Amex)",
+            "DC": "DC (Discover)", "UC": "UC (Uncategorized)",
+        }
+        cc_type_combo.set(_cc_type_map_display.get(existing.get("cc_type", "VC"), "VC (Visa)"))
+        cc_type_combo.pack(side=LEFT)
+        fields["cc_type"] = cc_type_combo
+
         # Initialize status dropdown based on PMS type (handles case where McKesson is defaulted from store)
         if not editing:
             on_pms_type_change()
+        else:
+            # When editing, show/hide the credit-card section for the existing PMS type
+            if pms_type_combo.get() == "McKesson":
+                cc_frame.pack(fill=X, pady=(8, 4))
         # Initialize status info display
         self._update_status_info_dynamic(pms_type_combo, status_combo, info_label)
 
@@ -889,6 +948,23 @@ class PMSIDataBuilderUI:
                 "authorized_refills": int(fields["authorized_refills"].get() or "5"),
                 "sig_text": fields["sig_text"].get().strip(),
             }
+
+            # Credit card (McKesson only) — captured when the checkbox is enabled
+            if pms_type == "McKesson" and fields["cc_enable"].get():
+                cc_last4 = fields["cc_last4"].get().strip()
+                cc_exp = fields["cc_exp"].get().strip()
+                if not (cc_last4.isdigit() and len(cc_last4) == 4):
+                    messagebox.showerror("Validation", "Credit card Last 4 must be exactly 4 digits.")
+                    return
+                import re as _re
+                if not _re.match(r"^(0[1-9]|1[0-2])/\d{4}$", cc_exp):
+                    messagebox.showerror("Validation", "Credit card expiration must be MM/YYYY (e.g. 12/2030).")
+                    return
+                # Map "VC (Visa)" display back to the XSD enum code "VC"
+                cc_type_code = fields["cc_type"].get().split()[0]
+                rx_data["cc_last4"] = cc_last4
+                rx_data["cc_exp"] = cc_exp
+                rx_data["cc_type"] = cc_type_code
 
             if not rx_data["drug_name"]:
                 messagebox.showerror("Validation", "Drug name is required.")
@@ -1013,6 +1089,9 @@ class PMSIDataBuilderUI:
                         drug_name=rx["drug_name"],
                         store_number=self.patient_data.get("store_number", "125"),
                         include_p360=False,
+                        cc_last4=rx.get("cc_last4"),
+                        cc_exp=rx.get("cc_exp"),
+                        cc_type=rx.get("cc_type", "VC"),
                     )
                     lines.append(f"      ─── Will produce (McKesson/PerSe): ───")
                     lines.append(f"      IsReady:        {mck_scenario.rx.is_ready}")
@@ -1022,6 +1101,8 @@ class PMSIDataBuilderUI:
                     if mck_scenario.rx.not_refillable_reason_code:
                         lines.append(f"      NotRefillCode:  {mck_scenario.rx.not_refillable_reason_code}")
                     lines.append(f"      DEA Class:      {mck_scenario.rx.dea_class}")
+                    if rx.get("cc_last4"):
+                        lines.append(f"      Credit Card:    *{rx['cc_last4']} {rx.get('cc_type','VC')} exp {rx.get('cc_exp','')}")
                 elif pms_type == "Liberty":
                     lib_scenario = build_liberty_scenario(
                         status=status,
@@ -1179,6 +1260,9 @@ class PMSIDataBuilderUI:
                         refills_remaining=str(rx_data.get("refills_remaining", 3)),
                         refills_authorized=str(rx_data.get("authorized_refills", 5)),
                         include_p360=self.enable_p360.get() and HAS_P360,
+                        cc_last4=rx_data.get("cc_last4"),
+                        cc_exp=rx_data.get("cc_exp"),
+                        cc_type=rx_data.get("cc_type", "VC"),
                     )
 
                     # Upload to simulator
