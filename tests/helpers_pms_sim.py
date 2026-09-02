@@ -1218,6 +1218,14 @@ class McKessonRx:
     first_fill_date: str = "2025-06-01"
     last_fill_date: str = "2026-05-01"
     last_fill_number: str = "3"
+    # Credit card (optional — for Home Delivery / payment flows, PC-29566)
+    # When cc_last4 is set, a <CreditCardList> with one default card is emitted.
+    cc_last4: str | None = None
+    cc_exp: str | None = None  # Format: MM/YYYY (e.g. "12/2030")
+    cc_type: str = "VC"  # XSD enum: VC=Visa, MC=Mastercard, AE=Amex, DC=Discover, UC=Uncategorized
+    cc_first: str = ""
+    cc_last: str = ""
+    cc_status: str = "Active"
 
 
 @dataclass
@@ -1319,6 +1327,11 @@ def build_mckesson_scenario(
     include_p360: bool = True,
     store_id: int = DEFAULT_STORE_ID,
     store_npi: str = DEFAULT_STORE_NPI,
+    cc_last4: str | None = None,
+    cc_exp: str | None = None,
+    cc_type: str = "VC",
+    cc_first: str = "",
+    cc_last: str = "",
 ) -> McKessonScenario:
     """Build a McKesson/PerSe scenario for a desired status outcome.
 
@@ -1340,6 +1353,13 @@ def build_mckesson_scenario(
         include_p360: Whether to build P360 patient data.
         store_id: OPE store ID for P360.
         store_npi: Store NPI for P360.
+        cc_last4: Last 4 digits of a default credit card. When set, emits a
+            <CreditCardList> with one IsDefault="true" card (for Home Delivery
+            / payment flows, PC-29566). Leave None for no card.
+        cc_exp: Card expiration as MM/YYYY (e.g. "12/2030" valid, "12/2012" expired).
+        cc_type: Card type code (e.g. "VISA", "VC", "MC").
+        cc_first: Cardholder first name (defaults to patient_first).
+        cc_last: Cardholder last name (defaults to patient_last).
 
     Returns:
         McKessonScenario with rx data and optional P360 patient.
@@ -1405,6 +1425,11 @@ def build_mckesson_scenario(
         patient_pay_amount=recipe.get("patient_pay_amount"),
         first_fill_date=first_fill,
         last_fill_date=last_fill,
+        cc_last4=cc_last4,
+        cc_exp=cc_exp,
+        cc_type=cc_type,
+        cc_first=cc_first,
+        cc_last=cc_last,
     )
 
     # Build P360 patient if requested
@@ -1481,6 +1506,37 @@ def _build_mckesson_rx_info_xml(rx: McKessonRx) -> str:
     if not rx.is_refillable and rx.not_refillable_reason_code:
         fill_children += f'          <ns2:NotRefillableInfo NotRefillableReasonCode="{rx.not_refillable_reason_code}" IsDoctorAuthAllowed="{rx.is_doctor_auth_allowed}" />\n'
 
+    # Build optional CreditCardList (for Home Delivery / payment flows, PC-29566)
+    # The XSD PatientInfoType/Extension sequence is STRICT and requires elements
+    # in this exact order: Address, SSN, MRN, Gender, EnrollmentFlags, CreditCardList.
+    # When a card is present we must emit MRN + EnrollmentFlags too, or the whole
+    # sequence fails validation (pms-services returns UNKOWN_ERROR).
+    # NOTE: CCType must be an XSD enum code: VC=Visa, MC=Mastercard, AE=Amex,
+    #       DC=Discover, UC=Uncategorized. ("VISA" etc. are INVALID.)
+    if rx.cc_last4:
+        cc_first = rx.cc_first or rx.patient_first
+        cc_last = rx.cc_last or rx.patient_last
+        patient_extension = (
+            f'\n            <ns3:Address type="primary" State="NC" City="RALEIGH" Zip="27604" Line1="100 TEST ST" />'
+            f'\n            <ns3:SSN />'
+            f'\n            <ns3:MRN value="6721" />'
+            f'\n            <ns3:Gender>M</ns3:Gender>'
+            f'\n            <ns3:EnrollmentFlags>'
+            f'\n              <ns3:Flag Name="WillCallDeviceOption" Value="Y" />'
+            f'\n            </ns3:EnrollmentFlags>'
+            f'\n            <ns3:CreditCardList>'
+            f'\n              <ns3:CreditCard MiddleName="" Last4Pan="{rx.cc_last4}" '
+            f'CCStatus="{rx.cc_status}" ExpDate="{rx.cc_exp or ""}" '
+            f'FirstName="{cc_first}" IsDefault="true" CCType="{rx.cc_type}" LastName="{cc_last}" />'
+            f'\n            </ns3:CreditCardList>'
+        )
+    else:
+        patient_extension = (
+            f'\n            <ns3:Address type="primary" State="NC" City="RALEIGH" Zip="27604" Line1="100 TEST ST" />'
+            f'\n            <ns3:SSN />'
+            f'\n            <ns3:Gender>M</ns3:Gender>'
+        )
+
     xml = f'''<?xml version="1.0" encoding="UTF-8"?>
 <ns1:Envelope xmlns:ns1="http://schemas.xmlsoap.org/soap/envelope/">
   <ns1:Header>
@@ -1495,10 +1551,7 @@ def _build_mckesson_rx_info_xml(rx: McKessonRx) -> str:
           <ns3:DateOfBirth xmlns:ns3="http://www.techrx.com/trexone/1_0">{rx.patient_dob}</ns3:DateOfBirth>
           <ns3:PrimaryPhone xmlns:ns3="http://www.techrx.com/trexone/1_0">{rx.patient_phone}</ns3:PrimaryPhone>
           <ns3:ExternalPatientID xmlns:ns3="http://www.techrx.com/trexone/1_0">{rx.patient_id}</ns3:ExternalPatientID>
-          <ns3:Extension xmlns:ns3="http://www.techrx.com/trexone/1_0">
-            <ns3:Address type="primary" State="NC" City="RALEIGH" Zip="27604" Line1="100 TEST ST" />
-            <ns3:SSN />
-            <ns3:Gender>M</ns3:Gender>
+          <ns3:Extension xmlns:ns3="http://www.techrx.com/trexone/1_0">{patient_extension}
           </ns3:Extension>
         </ns2:PatientInfo>
         <ns2:FillInfo IsReady="{str(rx.is_ready).lower()}" RefillQty="{rx.refill_qty}" IsRefillable="{str(rx.is_refillable).lower()}">
