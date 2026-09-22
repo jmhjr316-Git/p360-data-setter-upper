@@ -103,7 +103,7 @@ ENVIRONMENTS = {
     "staging": {
         "sim_base_url": "https://10.13.60.40/FsiXmlSimulator/manage.jsp",
         "sim_host_header": "pmssim-ocp-sit.k8s.raleng.omnicell.com",
-        "wiremock_base_url": "",  # TODO: staging wiremock URL when available
+        "wiremock_base_url": "https://ivr-mock-svcs.pc.s.awscloud.private",  # verified reachable 2026-09-22
     },
 }
 
@@ -1031,6 +1031,96 @@ def list_sim_files(path: str = "PDX") -> list[str]:
             raise RuntimeError(f"Failed to list files: {resp.status_code} {resp.text[:200]}")
         # Response is newline-separated file list
         return [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
+
+
+# Which PMS types are served by the Tomcat manage.jsp sim vs by WireMock.
+# manage.jsp (read/append/list/write/delete, ?base=legacy for socket data):
+_MANAGEJSP_PMS = {"PDX", "PDX_EPS", "MCKESSON", "PERSE", "PDX275", "ATEBGEN", "RX30", "ANS", "KROGER"}
+# WireMock (files served at served-route path; NOT visible to manage.jsp):
+_WIREMOCK_PMS = {"LIBERTY", "EPIC", "EPIC2018"}
+
+
+def read_sim_file(file_path: str, pms_type: str = "PDX", legacy: bool = False) -> str:
+    """Read (view) the raw contents of an existing sim file, routing to the
+    correct backend automatically based on PMS type. Respects the current
+    environment set via set_environment() (QA or staging, incl. staging's
+    IP + Host-header workaround and staging WireMock URL).
+
+    Two backends exist:
+      - manage.jsp (Tomcat sim): PDX, McKesson/PerSe, RX30/AtebGen(ANS), PDX275/legacy.
+        Requires the read/append-capable manage.jsp (pms-simulator MR 34, deployed
+        to QA + staging 2026-09-22). Uses ?action=read (+ ?base=legacy for socket data).
+      - WireMock (ivr-mock-svcs): Liberty, Epic. manage.jsp CANNOT see these.
+        Content is read via the served static path (GET {wiremock}/{file_path});
+        note GET /__admin/files/<path> returns 404 — that endpoint is PUT/DELETE only.
+
+    Args:
+        file_path: Path to the file.
+            - manage.jsp: relative to the base, e.g. "PDX/RxResponse7249001.xml",
+              "PerSe/RxInfoRsp6125020.xml". For legacy=True, just the filename,
+              e.g. "fsisimdata_pdxs_v275".
+            - WireMock: the __files-relative path, e.g.
+              "liberty/libertyquery1000100.json" or
+              "epic/2018/soap11/GetPrescriptionInfoResponse-6071261-9759001.xml".
+        pms_type: PMS type / backend selector (case-insensitive). One of
+            PDX, MCKESSON, PDX275, ATEBGEN/RX30, ANS, KROGER (manage.jsp) or
+            LIBERTY, EPIC (WireMock).
+        legacy: If True, read from the socket-sim legacy dir via ?base=legacy
+            (manage.jsp backends only). Ignored for WireMock.
+
+    Returns:
+        The file contents as a string.
+
+    Raises:
+        RuntimeError: on non-200, missing file, or WireMock not configured.
+        ValueError: on unknown pms_type.
+    """
+    key = (pms_type or "").upper().replace("-", "_").replace(" ", "")
+
+    if key in _WIREMOCK_PMS:
+        base = (WIREMOCK_BASE_URL_OVERRIDE or WIREMOCK_BASE_URL).rstrip("/")
+        if not base:
+            raise RuntimeError(
+                "WireMock base URL is not set for the current environment; "
+                "cannot read Liberty/Epic files. Call set_environment() first."
+            )
+        served = file_path.lstrip("/")
+        url = f"{base}/{served}"
+        with httpx.Client(verify=False, timeout=15.0) as client:
+            resp = client.get(url)
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"Failed to read WireMock file '{served}': HTTP {resp.status_code} "
+                f"{resp.text[:200]}"
+            )
+        return resp.text
+
+    if key in _MANAGEJSP_PMS:
+        base_param = "&base=legacy" if legacy else ""
+        url = f"{SIM_BASE_URL}?action=read{base_param}&file_path={file_path}"
+        with httpx.Client(verify=False, timeout=30.0) as client:
+            resp = client.get(url, headers=_sim_headers())
+        # New manage.jsp returns text/plain for a real file, or JSON error for
+        # a miss. The OLD 3-action JSP returns an empty JSON body (no read branch).
+        ctype = resp.headers.get("content-type", "")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to read '{file_path}': HTTP {resp.status_code}")
+        if "application/json" in ctype:
+            body = resp.text.strip()
+            if not body:
+                raise RuntimeError(
+                    "manage.jsp returned an empty JSON body for action=read — this "
+                    "environment is still running the OLD 3-action manage.jsp (no read "
+                    "action). It needs the read-capable manage.jsp (pms-simulator MR 34) "
+                    "deployed / pmssim pod redeployed."
+                )
+            raise RuntimeError(f"manage.jsp read error for '{file_path}': {body}")
+        return resp.text
+
+    raise ValueError(
+        f"Unknown pms_type '{pms_type}'. Use one of manage.jsp types "
+        f"{sorted(_MANAGEJSP_PMS)} or WireMock types {sorted(_WIREMOCK_PMS)}."
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
