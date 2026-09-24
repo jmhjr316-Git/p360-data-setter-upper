@@ -19,6 +19,11 @@ Usage:
 
 Token: reads OCP_MSGCMPGN_TOKEN from env (the long-lived super-admin token). The UI repo's
 .env has it; export it or run `set -a; source .env; set +a` first.
+
+NOTE: uses the msg-cmpgn-svcs *v2* API (/cxf/api/messagecampaign/v2). v2 is what the E360 UI
+uses; it has the correct campaign shape (top-level channelConfigurations + messageTypeConfigurations)
+and supports DELETE (v1 does NOT — v1 DELETE returns 405, and a v1-shaped campaign is missing the
+v2 channel configs so it fails validation on Save, e.g. sendNow toggles won't persist).
 """
 import argparse
 import copy
@@ -30,8 +35,8 @@ import urllib.request
 import urllib.error
 
 BASE = {
-    "qa": "https://msg-cmpgn-svcs.pc.q.platform.enlivenhealth.co/cxf/api/messagecampaign/v1",
-    "staging": "https://msg-cmpgn-svcs.pc.s.platform.enlivenhealth.co/cxf/api/messagecampaign/v1",
+    "qa": "https://msg-cmpgn-svcs.pc.q.platform.enlivenhealth.co/cxf/api/messagecampaign/v2",
+    "staging": "https://msg-cmpgn-svcs.pc.s.platform.enlivenhealth.co/cxf/api/messagecampaign/v2",
 }
 # Canonical source campaign (QA client 5011)
 SOURCE_ENV = "qa"
