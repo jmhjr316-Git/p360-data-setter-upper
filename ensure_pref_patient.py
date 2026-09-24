@@ -23,7 +23,7 @@ import uuid
 import psycopg2
 
 sys.path.insert(0, '/mnt/c/Code/Data_setter_upper')
-from tests.helpers_p360 import set_environment, ensure_patient, get_patient, close
+from tests.helpers_p360 import set_environment, ensure_patient, get_patient, close, _get_collection
 
 # Preference DB connection info per environment
 PREF_DB = {
@@ -137,41 +137,69 @@ def ensure_p360_patient(env: str, client_id: int, phone: str) -> None:
     atebPatientId — without it the patient card renders but cannot be opened.
     Structure mirrors known-working QA/staging patients (e.g. 7249143802).
     """
+def ensure_p360_patient(env: str, client_id: int, phone: str,
+                        first_name: str = "Automation", last_name: str | None = None,
+                        store_id: int | None = None) -> None:
+    """Ensure the P360 patient document exists with the given identity.
+
+    The Preference Management search matches on the patient's name + phone, so
+    first_name/last_name MUST be what the test searches for. store_id must be the
+    store the env's UI lands on (pass per-env; defaults to client_id for back-compat).
+
+    Always upserts (via ensure_patient's replace_one) so an existing patient with the
+    WRONG name/store gets corrected to the spec — idempotent to the test's requirement,
+    not merely "exists". atebPatientId is required or the card renders but won't open.
+    """
     set_environment(env)
-    existing = get_patient(client_id, phone)
-    if existing:
-        print(f"  [{env}] P360 patient exists for {phone} (client {client_id})")
-    else:
-        # atebPatientId must be unique-ish; derive from phone digits
-        ateb_id = phone[-8:]
-        patient = {
-            "clientId": client_id,
-            "storeId": client_id,
-            "storeNpi": "1821516543",
-            "atebPatientId": ateb_id,
-            "dateOfBirth": "19850601",
-            "name": {"firstName": "Automation", "lastName": "PrefTest" + phone[-4:]},
-            "phone": {"primary": phone},
-            "testCase": "PrefMgmtAutomation",
-            "prescriptions": [
-                {
-                    "medication": {
-                        "medicationName": "automation test drug",
-                        "gpi": "59720867869337",
-                        "ndc": "13663892838",
-                    },
-                    "rxNum": "9009401",
-                    "fillDate": "20230215",
-                    "daysSupply": 30,
-                    "refillsRemaining": 4,
-                    "originalRefillsAuth": 5,
-                    "rxStatus": "OPEN",
-                    "patientRxId": 14563,
-                }
-            ],
-        }
-        ensure_patient(patient)
-        print(f"  [{env}] Created P360 patient for {phone} (client {client_id}) with atebPatientId={ateb_id}")
+    if last_name is None:
+        last_name = "PrefTest" + phone[-4:]
+    if store_id is None:
+        store_id = client_id
+    ateb_id = phone[-8:]
+    patient = {
+        "clientId": client_id,
+        "storeId": store_id,
+        "storeNpi": "1821516543",
+        "atebPatientId": ateb_id,
+        "dateOfBirth": "19850601",
+        "name": {"firstName": first_name, "lastName": last_name},
+        # The Preference Management name search queries the `search` subdocument with
+        # UPPERCASED names (firstNameUpper/lastNameUpper), NOT name.firstName/lastName.
+        # Without this, a patient is findable by phone but NOT by name. (Matches the
+        # structure of working P360 patients, e.g. search.lastNameUpper='TESTER'.)
+        "search": {
+            "firstNameUpper": first_name.upper(),
+            "lastNameUpper": last_name.upper(),
+            "dob": "19850601",
+            "phoneNumber": phone,
+        },
+        "phone": {"primary": phone},
+        "testCase": "PrefMgmtAutomation",
+        "prescriptions": [
+            {
+                "medication": {
+                    "medicationName": "automation test drug",
+                    "gpi": "59720867869337",
+                    "ndc": "13663892838",
+                },
+                "rxNum": "9009401",
+                "fillDate": "20230215",
+                "daysSupply": 30,
+                "refillsRemaining": 4,
+                "originalRefillsAuth": 5,
+                "rxStatus": "OPEN",
+                "patientRxId": 14563,
+            }
+        ],
+    }
+    # Upsert matched on clientId + phone ONLY (not name), so re-seeding CORRECTS an
+    # existing patient's name/store/search instead of creating a duplicate document.
+    coll = _get_collection()
+    coll.replace_one(
+        {"clientId": client_id, "phone.primary": phone},
+        patient, upsert=True)
+    print(f"  [{env}] Upserted P360 patient {phone} '{first_name} {last_name}' "
+          f"(client {client_id}, store {store_id}, atebPatientId={ateb_id}, search set)")
     close()
 
 
@@ -180,12 +208,16 @@ def main():
     ap.add_argument("--env", required=True, choices=["qa", "staging"])
     ap.add_argument("--client", required=True, type=int)
     ap.add_argument("--phone", required=True)
+    ap.add_argument("--firstName", default="Automation", help="P360 name.firstName (must match what the test searches for)")
+    ap.add_argument("--lastName", default=None, help="P360 name.lastName (defaults to PrefTest<last4>)")
+    ap.add_argument("--storeId", type=int, default=None, help="P360 storeId (must be the store the env's UI uses)")
     ap.add_argument("--unreachable", action="store_true", help="Set unreachableNumber=true")
     ap.add_argument("--dnc", action="store_true", help="Set DO_NOT_CONTACT status (STOP)")
     args = ap.parse_args()
 
     print(f"Ensuring pref-searchable patient: {args.phone} (client {args.client}, {args.env})")
-    ensure_p360_patient(args.env, args.client, args.phone)
+    ensure_p360_patient(args.env, args.client, args.phone,
+                        first_name=args.firstName, last_name=args.lastName, store_id=args.storeId)
     ensure_preference_record(args.env, args.client, args.phone,
                              unreachable=args.unreachable, dnc=args.dnc)
     print("Done.")
