@@ -191,6 +191,7 @@ REJECT_CODE_DESCRIPTIONS = {
     "507": "507 = Prescription has been deactivated.",
     "508": "508 = Cannot fill prescription without patient permission to contact prescriber.",
     "509": "509 = Prescription number is not known to pharmacy.",
+    "510": "510 = Internal Server Error.",
     "511": "511 = Store not configured for mail delivery.",
     "512": "512 = Missing/incomplete delivery address.",
     "513": "513 = Unable to process refill request, call back during pharmacy operating hours.",
@@ -220,6 +221,10 @@ class RxStatus(str, Enum):
     TOO_SOON = "TOO_SOON"
     RX_CROSS_STORE = "RX_CROSS_STORE"
     RX_DELIVERED = "RX_DELIVERED"
+    # Rx Info/Status succeed (rx is REFILLABLE), but the refill SUBMIT is rejected
+    # by the PMS. Used to drive the Posting App (RxRefill-Request-Post) down its
+    # COMPLETE_WITH_FAILURES path. See _build_refill_response_xml.
+    REFILL_REJECTED = "REFILL_REJECTED"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -269,6 +274,11 @@ class SimRx:
     reject_code: str | None = None
     # Ship datetime for StatusResponse
     ship_datetime: str | None = None
+    # Refill SUBMIT rejection: when True, RefillResponse emits a PMS-error envelope
+    # (msgStatusCode=900 + optional rejectCodeGroup) so the refill submit is treated
+    # as rejected (refillAccepted=false) while RxResponse/StatusResponse stay valid.
+    refill_rejected: bool = False
+    refill_reject_code: str | None = None  # optional rejectCodeGroup code (e.g. "513")
 
 
 @dataclass
@@ -303,6 +313,8 @@ def build_scenario(
     refills_remaining: int = 3,
     authorized_refills: int = 5,
     include_p360: bool = True,
+    refill_outcome: str | None = None,
+    refill_reject_code: str | None = None,
     **kwargs,
 ) -> SimScenario:
     """Build a complete scenario that produces the desired rx_status.
@@ -327,6 +339,14 @@ def build_scenario(
         refills_remaining: Remaining refills
         authorized_refills: Originally authorized refills
         include_p360: Whether to build matching P360 patient doc
+        refill_outcome: Optional refill SUBMIT outcome, independent of rx_status.
+            "REJECTED" makes the RefillResponse indicate a PMS error (msgStatusCode=900)
+            so the refill submit fails (refillAccepted=false) while Rx Info/Status stay
+            valid — for the Posting App COMPLETE_WITH_FAILURES path. Any refillable
+            rx_status (REFILLABLE, RX_PICKED_UP, ...) can carry refill_outcome="REJECTED".
+            (rx_status=RxStatus.REFILL_REJECTED is shorthand for REFILLABLE + this.)
+        refill_reject_code: Optional PDX rejectCodeGroup code for the failing refill
+            (e.g. "513"); msgStatusCode=900 alone already fails, this just adds detail.
         **kwargs: Additional overrides passed to SimRx
 
     Returns:
@@ -361,6 +381,12 @@ def build_scenario(
     # Compute dates based on recipe
     dates = recipe["date_fn"](now, days_supply)
 
+    # Resolve refill-submit rejection: from the recipe (REFILL_REJECTED) OR the
+    # explicit refill_outcome param (lets any refillable status carry a failing submit).
+    refill_rejected = recipe.get("refill_rejected", False)
+    if refill_outcome and refill_outcome.upper() == "REJECTED":
+        refill_rejected = True
+
     # Build SimRx
     rx = SimRx(
         rx_number=rx_number,
@@ -393,6 +419,8 @@ def build_scenario(
         rx_expiration_date=dates["rx_expiration_date"],
         reject_code=recipe.get("reject_code"),
         ship_datetime=dates.get("ship_datetime"),
+        refill_rejected=refill_rejected,
+        refill_reject_code=refill_reject_code,
     )
 
     # Apply any explicit overrides
@@ -673,6 +701,18 @@ _STATUS_RECIPES: dict[RxStatus, dict[str, Any]] = {
             "AND inboundCampaignIdForManualRxRules must be blank/absent."
         ),
     },
+    RxStatus.REFILL_REJECTED: {
+        "rx_response_code": 0,  # 000 = Rx Accepted  → Rx Info succeeds
+        "status_response_code": 207,  # Picked up long ago → valid, refillable
+        "date_fn": _dates_refillable,
+        "refillable": "Y",
+        "refill_rejected": True,  # RefillResponse emits msgStatusCode=900 (submit fails)
+        "notes": (
+            "Rx Info + Status VALID/REFILLABLE, but the refill SUBMIT is rejected: "
+            "RefillResponse msgStatusCode=900 → refillAccepted=false. Drives the Posting "
+            "App (RxRefill-Request-Post) to COMPLETE_WITH_FAILURES / RequestRx FAILED."
+        ),
+    },
 }
 
 
@@ -936,7 +976,55 @@ def _build_status_response_xml(rx: SimRx) -> str:
 
 
 def _build_refill_response_xml(rx: SimRx) -> str:
-    """Build RefillResponse XML (REFILL transaction response)."""
+    """Build RefillResponse XML (REFILL transaction response).
+
+    Success (default): msgStatusCode=000 + a valid rxStatusItem → pms-services maps
+    the refill to RxStatus.OK → refillAccepted=true.
+
+    Failure (rx.refill_rejected=True): emits msgStatusCode=900 (→ RxStatus.UNKNOWN,
+    non-OK) so pms-services reports refillAccepted=false. This is the exact shape a
+    real PDX EPS pharmacy returns on a refill error (confirmed against a prod client
+    log and the pdxEPS.json REFILL transaction mapping). It drives the Posting App's
+    RxRefill-Request-Post Lambda down COMPLETE_WITH_FAILURES / RequestRx FAILED.
+    Optionally include a rejectCodeGroup (rx.refill_reject_code, e.g. 513) — codes
+    509/513/514/515/521/506/507 also map to non-OK statuses.
+    """
+    if rx.refill_rejected:
+        reject_group = ""
+        if rx.refill_reject_code:
+            desc = REJECT_CODE_DESCRIPTIONS.get(
+                rx.refill_reject_code, f"{rx.refill_reject_code} = Refill rejected."
+            )
+            reject_group = f"""
+    <rejectCodeGroup>
+      <rejectCode>
+        <code>{rx.refill_reject_code}</code>
+        <description>{desc}</description>
+      </rejectCode>
+    </rejectCodeGroup>"""
+        # NOTE: The refill RESPONSE root is <rxStatusResponse> (StatusResponseTO in
+        # EPS_ATEB_IVR.xsd), NOT <refillRxResponse> — there is no refillRxResponse
+        # element in the XSD. This matches the shape a real PDX pharmacy returns on a
+        # refill error (confirmed from a prod client log). StatusResponseTO allows a
+        # bare msgStatus with rxStatusGroup optional (minOccurs=0), so msgStatusCode=900
+        # + optional rejectCodeGroup validates and maps to non-OK (refillAccepted=false).
+        return f"""<?xml version="1.0" encoding="UTF-8"?>
+<rxStatusResponse version="1.0.18.4">
+  <control>
+    <source>ivr</source>
+    <destination>eps</destination>
+    <storeNumberType>nhin</storeNumberType>
+    <storeNumber>{rx.store_number}</storeNumber>
+    <softwareVersnum>2607</softwareVersnum>
+    <transactionControlReference>9ebecdfc</transactionControlReference>
+    <dateTimeOfInitiation>2026-01-01T00:00:00.000</dateTimeOfInitiation>
+    <classOfServiceKey>LEVEL 1</classOfServiceKey>
+  </control>
+  <msgStatus>
+    <msgStatusCode>900</msgStatusCode>{reject_group}
+  </msgStatus>
+</rxStatusResponse>"""
+
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <refillRxResponse version="1.0.18.4">
   <control>
@@ -1316,6 +1404,12 @@ class McKessonRx:
     cc_first: str = ""
     cc_last: str = ""
     cc_status: str = "Active"
+    # Refill SUBMIT rejection: when True, SubmitIVROrderRsp is a GenericFailureRsp
+    # (MsgName != GenericSuccessRsp) → pms-services maps the refill to REJECTED
+    # (refillAccepted=false) while RxInfoRsp stays valid. Posting App COMPLETE_WITH_FAILURES.
+    refill_rejected: bool = False
+    refill_reject_code: str = "1001"
+    refill_reject_msg: str = "Refill request rejected by pharmacy."
 
 
 @dataclass
@@ -1422,6 +1516,7 @@ def build_mckesson_scenario(
     cc_type: str = "VC",
     cc_first: str = "",
     cc_last: str = "",
+    refill_outcome: str | None = None,
 ) -> McKessonScenario:
     """Build a McKesson/PerSe scenario for a desired status outcome.
 
@@ -1520,6 +1615,7 @@ def build_mckesson_scenario(
         cc_type=cc_type,
         cc_first=cc_first,
         cc_last=cc_last,
+        refill_rejected=(refill_outcome or "").upper() == "REJECTED",
     )
 
     # Build P360 patient if requested
@@ -1664,7 +1760,43 @@ def _build_mckesson_rx_info_xml(rx: McKessonRx) -> str:
 
 
 def _build_mckesson_refill_response_xml(rx: McKessonRx) -> str:
-    """Build the PerSe SubmitIVROrderRsp (refill success) XML."""
+    """Build the PerSe SubmitIVROrderRsp XML (refill submit response).
+
+    Success (default): MsgHeader MsgName="GenericSuccessRsp" → the McKesson adapter
+    (McKesson.java processMsgHeader/mapRxRefill) maps the refill to RxStatus.OK →
+    refillAccepted=true.
+
+    Failure (rx.refill_rejected=True): MsgName="GenericFailureRsp" (a MsgName the
+    adapter explicitly parses — NOT an arbitrary name, which would throw
+    PmsResponseException/500). MsgName != GenericSuccessRsp → RxStatus.REJECTED →
+    refillAccepted=false, driving the Posting App (RxRefill-Request-Post) to
+    COMPLETE_WITH_FAILURES. RxInfoRsp stays valid. Shape mirrors the pms-service
+    test fixture mckResponse_Failure.xml.
+    """
+    if rx.refill_rejected:
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope
+    xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:trex1_0="http://www.techrx.com/trexone/1_0"
+    xmlns:trex1_1="http://www.techrx.com/trexone/1_1">
+  <soap:Header>
+    <trex1_1:MsgHeader
+        MsgName="GenericFailureRsp"
+        Version="1.0"
+        SourceID="TestServlet"
+        DestinationID="Ateb"
+        MsgID="1" />
+  </soap:Header>
+  <soap:Body>
+    <trex1_0:GenericFailureRsp
+        Severity="Error"
+        Code="{rx.refill_reject_code}"
+        ErrorMsg="{rx.refill_reject_msg}"
+        Actor="PMS"
+        Detail="Refill rejected" />
+  </soap:Body>
+</soap:Envelope>'''
+
     return '''<?xml version="1.0" encoding="UTF-8"?>
 <soap:Envelope
     xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
@@ -1882,6 +2014,11 @@ class LibertyRx:
     available_quantity: int = 90
     written_date: str = ""
     refill_until_date: str = ""
+    # Refill SUBMIT rejection: when True, the libertyrefill JSON reports a non-"Success"
+    # status so pms-services maps the refill to REJECTED (refillAccepted=false) while
+    # the query/status legs stay valid. For the Posting App COMPLETE_WITH_FAILURES path.
+    refill_rejected: bool = False
+    refill_reject_status: str = "Invalid_Script_Number"  # non-"Success" enum value → REJECTED
 
 
 @dataclass
@@ -1923,6 +2060,8 @@ def build_liberty_scenario(
     refills_remaining: int = 4,
     refills_authorized: int = 5,
     include_p360: bool = True,
+    refill_outcome: str | None = None,
+    refill_reject_status: str = "Invalid_Script_Number",
 ) -> LibertyScenario:
     """Build a Liberty scenario that will resolve to the desired status.
 
@@ -2067,6 +2206,8 @@ def build_liberty_scenario(
         available_quantity=available_quantity,
         written_date=written_date,
         refill_until_date=refill_until_date,
+        refill_rejected=(refill_outcome or "").upper() == "REJECTED",
+        refill_reject_status=refill_reject_status,
     )
 
     query_json = _build_liberty_query_json(rx)
@@ -2270,10 +2411,22 @@ def _build_liberty_status_json(rx: LibertyRx, refill_until: str) -> str:
 
 
 def _build_liberty_refill_json(rx: LibertyRx) -> str:
-    """Build the libertyrefill JSON file content (always success)."""
+    """Build the libertyrefill JSON file content.
+
+    Success (default): Status="Success" → Liberty adapter maps to RxStatus.OK →
+    refillAccepted=true.
+
+    Failure (rx.refill_rejected=True): Status is a non-"Success" value (default
+    "Invalid_Script_Number" — a value confirmed valid in the Liberty refill response
+    model; arbitrary strings like "Rejected" fail Jackson enum parsing → HTTP 500).
+    The Liberty adapter (Liberty.java mapRxRefill) maps any non-"Success" to
+    RxStatus.REJECTED → refillAccepted=false, driving the Posting App
+    (RxRefill-Request-Post) to COMPLETE_WITH_FAILURES. Query/status legs stay valid.
+    """
     import json
 
-    refill = [{"ScriptNumber": rx.rx_number, "Status": "Success"}]
+    status = rx.refill_reject_status if rx.refill_rejected else "Success"
+    refill = [{"ScriptNumber": rx.rx_number, "Status": status}]
     return json.dumps(refill, indent=2)
 
 
@@ -2296,6 +2449,36 @@ def upload_liberty_rx(rx_number: str, query_json: str, status_json: str, refill_
             raise RuntimeError(
                 f"Failed to upload {file_path}: HTTP {resp.status_code} — {resp.text}"
             )
+
+    # The refill route (POST /libertypms/refill) is a response-template stub whose
+    # bodyFileName is templated from the request body. WireMock caches __files content
+    # for these, so an updated libertyrefill file is NOT picked up until mappings are
+    # reset. Without this, a changed refill response (e.g. success→rejected) serves
+    # stale content. GET-by-path routes (query/status) don't need this, but resetting
+    # is harmless and keeps all three consistent.
+    _wiremock_reset_mappings()
+
+
+def _wiremock_reset_mappings() -> None:
+    """Reset WireMock stub mappings so updated __files content is re-read.
+
+    Required after changing a templated (response-template) bodyFileName target such
+    as the Liberty/Epic refill files — WireMock otherwise serves cached file content.
+    """
+    import requests
+
+    try:
+        resp = requests.post(
+            f"{WIREMOCK_BASE_URL}/__admin/mappings/reset", verify=False, timeout=10
+        )
+        if resp.status_code != 200:
+            logger.warning(
+                "WireMock mappings reset returned HTTP %s — updated refill files may "
+                "serve stale content until reset succeeds.",
+                resp.status_code,
+            )
+    except Exception as exc:  # non-fatal — file upload already succeeded
+        logger.warning("WireMock mappings reset failed (%s); refill files may be stale.", exc)
 
 
 def delete_liberty_rx(rx_number: str) -> None:
@@ -2476,6 +2659,13 @@ class EpicRx:
     filled_on: str = ""
     end_date: str = ""
     sig: str = "Take by mouth."
+    # Refill SUBMIT rejection: when True, RequestFillsResponse reports a non-zero
+    # UpdatePrescriptionResult.ErrorCode (default 35 = REJECTED) + WasUpdated=false →
+    # pms-services maps the refill to REJECTED (refillAccepted=false) while
+    # GetPrescriptionInfoResponse stays valid. Posting App COMPLETE_WITH_FAILURES.
+    refill_rejected: bool = False
+    refill_reject_error_code: int = 35  # Epic2018.java: 35→REJECTED (31 DISCONTINUED, 32/39/44 NOT_REFILLABLE, 36/101 NOT_FOUND)
+    refill_reject_message: str = "Refill request rejected."
 
 
 @dataclass
@@ -2503,6 +2693,7 @@ def build_epic_scenario(
     days_supply: int = 30,
     refills_remaining: int = 11,
     include_p360: bool = True,
+    refill_outcome: str | None = None,
 ) -> EpicScenario:
     """Build an Epic scenario that will resolve to the desired status."""
     now = datetime.now()
@@ -2660,6 +2851,7 @@ def build_epic_scenario(
         filled_on=filled_on,
         end_date=end_date,
         sig="Take by mouth.",
+        refill_rejected=(refill_outcome or "").upper() == "REJECTED",
     )
 
     info_xml = _build_epic_info_xml(rx)
@@ -2808,7 +3000,46 @@ def _build_epic_info_xml(rx: EpicRx) -> str:
 
 
 def _build_epic_refill_xml(rx: EpicRx) -> str:
-    """Build the RequestFillsResponse SOAP XML (always success)."""
+    """Build the RequestFillsResponse SOAP XML (refill submit response).
+
+    Success (default): ErrorCode=0, WasUpdated=true → the Epic adapter
+    (Epic2018.java mapRxRefill) maps to RxStatus.OK → refillAccepted=true.
+
+    Failure (rx.refill_rejected=True): UpdatePrescriptionResult.ErrorCode is non-zero
+    (default 35 = REJECTED per Epic2018.java's switch) + ErrorMessage + WasUpdated=false
+    → RxStatus.REJECTED → refillAccepted=false, driving the Posting App
+    (RxRefill-Request-Post) to COMPLETE_WITH_FAILURES. GetPrescriptionInfoResponse
+    stays valid. (Other codes: 31=DISCONTINUED, 32/39/44=NOT_REFILLABLE, 36/101=NOT_FOUND.)
+    """
+    if rx.refill_rejected:
+        ec = rx.refill_reject_error_code
+        msg = rx.refill_reject_message
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:web="Epic.Clinical.Pharmacy.WebServices2018">
+    <soapenv:Header/>
+    <soapenv:Body>
+        <web:RequestFillsResponse>
+            <web:RequestFillsResult>
+                <web:ErrorCode>{ec}</web:ErrorCode>
+                <web:ErrorMessage>{msg}</web:ErrorMessage>
+                <web:PrescriptionsUpdated>0</web:PrescriptionsUpdated>
+                <web:UpdatePrescriptionResults>
+                    <web:UpdatePrescriptionResult>
+                        <web:ErrorCode>{ec}</web:ErrorCode>
+                        <web:ErrorMessage>{msg}</web:ErrorMessage>
+                        <web:FillId xsi:nil="true"
+                            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"></web:FillId>
+                        <web:PrescriptionId>{rx.prescription_id}</web:PrescriptionId>
+                        <web:UpdateTimestamp>{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}</web:UpdateTimestamp>
+                        <web:WasUpdated>false</web:WasUpdated>
+                    </web:UpdatePrescriptionResult>
+                </web:UpdatePrescriptionResults>
+            </web:RequestFillsResult>
+        </web:RequestFillsResponse>
+    </soapenv:Body>
+</soapenv:Envelope>'''
+
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
     xmlns:web="Epic.Clinical.Pharmacy.WebServices2018">
@@ -2854,6 +3085,11 @@ def upload_epic_rx(rx_number: str, ncpdp_id: str, info_xml: str, refill_xml: str
             raise RuntimeError(
                 f"Failed to upload {file_path}: HTTP {resp.status_code} — {resp.text}"
             )
+
+    # Reset WireMock mappings so an updated (e.g. success→rejected) RequestFillsResponse
+    # is re-read rather than served from the response-template cache. See the note in
+    # upload_liberty_rx / _wiremock_reset_mappings.
+    _wiremock_reset_mappings()
 
 
 def delete_epic_rx(rx_number: str, ncpdp_id: str = "9759001") -> None:

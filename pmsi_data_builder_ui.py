@@ -849,6 +849,27 @@ class PMSIDataBuilderUI:
         sig_entry.pack(side=LEFT, fill=X, expand=YES)
         fields["sig_text"] = sig_entry
 
+        # Refill Submission outcome (all PMS types) — Accepted (normal) or Rejected.
+        # "Rejected" keeps Rx Info/query valid but makes the refill SUBMIT fail
+        # (refillAccepted=false) so the Posting App hits COMPLETE_WITH_FAILURES.
+        row = ttk.Frame(content)
+        row.pack(fill=X, pady=4)
+        ttk.Label(row, text="Refill Submission:", width=22, anchor=W).pack(side=LEFT)
+        refill_outcome_combo = ttk.Combobox(
+            row, values=["Accepted (normal)", "Rejected (PMS rejects submit)"],
+            state="readonly", width=28,
+        )
+        refill_outcome_combo.set(
+            "Rejected (PMS rejects submit)"
+            if (existing.get("refill_outcome") or "").upper() == "REJECTED"
+            else "Accepted (normal)"
+        )
+        refill_outcome_combo.pack(side=LEFT)
+        fields["refill_outcome"] = refill_outcome_combo
+        ttk.Label(content, text="Rejected = Rx Info succeeds but the refill submit is rejected by the PMS "
+                                "(drives Posting App COMPLETE_WITH_FAILURES).",
+                  font=("Segoe UI", 8, "italic"), foreground="gray", wraplength=580).pack(fill=X, pady=(0, 6))
+
         # ── Credit Card (McKesson only — Home Delivery / payment flows, PC-29566) ──
         cc_frame = ttk.LabelFrame(content, text="Credit Card (McKesson only)", padding=8)
         # packed/unpacked dynamically by on_pms_type_change
@@ -947,6 +968,7 @@ class PMSIDataBuilderUI:
                 "refills_remaining": int(fields["refills_remaining"].get() or "3"),
                 "authorized_refills": int(fields["authorized_refills"].get() or "5"),
                 "sig_text": fields["sig_text"].get().strip(),
+                "refill_outcome": "REJECTED" if fields["refill_outcome"].get().startswith("Rejected") else None,
             }
 
             # Credit card (McKesson only) — captured when the checkbox is enabled
@@ -1092,6 +1114,7 @@ class PMSIDataBuilderUI:
                         cc_last4=rx.get("cc_last4"),
                         cc_exp=rx.get("cc_exp"),
                         cc_type=rx.get("cc_type", "VC"),
+                        refill_outcome=rx.get("refill_outcome"),
                     )
                     lines.append(f"      ─── Will produce (McKesson/PerSe): ───")
                     lines.append(f"      IsReady:        {mck_scenario.rx.is_ready}")
@@ -1112,6 +1135,7 @@ class PMSIDataBuilderUI:
                         drug_name=rx["drug_name"],
                         store_number=self.patient_data.get("store_number", "8174884613"),
                         include_p360=False,
+                        refill_outcome=rx.get("refill_outcome"),
                     )
                     lines.append(f"      ─── Will produce (Liberty/WireMock): ───")
                     lines.append(f"      Fill StatusCode:  {lib_scenario.rx.last_fill_status_code}")
@@ -1127,6 +1151,7 @@ class PMSIDataBuilderUI:
                         drug_name=rx["drug_name"],
                         ncpdp_id=self.patient_data.get("store_number", "9759001"),
                         include_p360=False,
+                        refill_outcome=rx.get("refill_outcome"),
                     )
                     lines.append(f"      ─── Will produce (Epic/WireMock SOAP): ───")
                     lines.append(f"      IsFillable:           {epic_scenario.rx.is_fillable}")
@@ -1182,6 +1207,7 @@ class PMSIDataBuilderUI:
                         refills_remaining=rx.get("refills_remaining", 3),
                         authorized_refills=rx.get("authorized_refills", 5),
                         include_p360=False,
+                        refill_outcome=rx.get("refill_outcome"),
                     )
                     lines.append(f"      ─── Will produce: ───")
                     lines.append(f"      RxResponse code:     {scenario.rx.rx_response_status_code:03d} ({scenario.rx.rx_response_status_description})")
@@ -1263,6 +1289,7 @@ class PMSIDataBuilderUI:
                         cc_last4=rx_data.get("cc_last4"),
                         cc_exp=rx_data.get("cc_exp"),
                         cc_type=rx_data.get("cc_type", "VC"),
+                        refill_outcome=rx_data.get("refill_outcome"),
                     )
 
                     # Upload to simulator
@@ -1292,6 +1319,7 @@ class PMSIDataBuilderUI:
                         refills_remaining=rx_data.get("refills_remaining", 4),
                         refills_authorized=rx_data.get("authorized_refills", 5),
                         include_p360=self.enable_p360.get() and HAS_P360,
+                        refill_outcome=rx_data.get("refill_outcome"),
                     )
 
                     # Upload JSON to WireMock
@@ -1321,6 +1349,7 @@ class PMSIDataBuilderUI:
                         days_supply=rx_data.get("days_supply", 30),
                         refills_remaining=rx_data.get("refills_remaining", 11),
                         include_p360=self.enable_p360.get() and HAS_P360,
+                        refill_outcome=rx_data.get("refill_outcome"),
                     )
 
                     # Upload XML to WireMock
@@ -1408,6 +1437,7 @@ class PMSIDataBuilderUI:
                         authorized_refills=rx_data.get("authorized_refills", 5),
                         include_p360=self.enable_p360.get() and HAS_P360,
                         sig_text=rx_data.get("sig_text", "Take one tablet by mouth every day"),
+                        refill_outcome=rx_data.get("refill_outcome"),
                     )
 
                     # Upload XML to simulator
