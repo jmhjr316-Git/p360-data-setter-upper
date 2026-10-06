@@ -135,11 +135,16 @@ DEFAULT_STORE_ID = 9001  # OPE store ID (from channel config orgContext URN)
 DEFAULT_STORE_NPI = "1821516543"  # Pharmacy NPI for the store
 
 # Known client → store configuration
-# storeId = OPE store ID (matches urn:OPE-STORE:{storeId} in channel config orgContext)
+# storeId = OPE store ID — MUST match urn:OPE-STORE:{storeId} in the channel config orgContext,
+#   because the P360 org-context lookup filters on orgs[].e360StoreId == that store number.
+#   (Seeding a patient on the wrong store = it inserts & shows in Pref Mgmt but is filtered out of
+#   the IVR personalization/orgcontext query. This bit client 8000 — was 9001, should be 80000.)
 # storeNpi = pharmacy NPI
 # pmsStoreNumber = what goes in XML <storeNumber> for the PMS sim
+# NOTE: pass store_id=... explicitly to build_scenario to target a specific store/DNIS
+#   (e.g. client 8000 also has store 80001 / NPI 1234580002).
 CLIENT_STORE_CONFIG = {
-    8000: {"store_id": 9001, "store_npi": "1234580001", "pms_store_number": "70050001"},
+    8000: {"store_id": 80000, "store_npi": "1234580001", "pms_store_number": "70050001"},
     9001: {"store_id": 9001, "store_npi": "1821516543", "pms_store_number": "70050001"},
 }
 
