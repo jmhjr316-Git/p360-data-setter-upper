@@ -1,8 +1,8 @@
 """P360 DocumentDB helper — create/ensure test patients exist.
 
 Provides a Python equivalent of the Node.js patientDb.js helper used by
-the PC platform tests. Connects to DocumentDB (p360_daily_docker.patient)
-and inserts patients idempotently (match on clientId + phone.primary + name).
+the PC platform tests. Connects to DocumentDB (QA: p360_ope_qa.patient) and
+inserts patients idempotently (match on clientId + phone.primary + name).
 
 Usage:
     from tests.helpers_p360 import ensure_patient, get_patient, P360_URI
@@ -28,17 +28,32 @@ import pymongo
 logger = logging.getLogger(__name__)
 
 P360_URI = (
-    "mongodb://docdb_admin:P360DocumentDockerCopy0507"
-    "@p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017"
-    "/?ssl=true&retryWrites=false&tlsAllowInvalidCertificates=true"
-    "&authSource=admin&authMechanism=SCRAM-SHA-1"
+    "mongodb://svc_krc:8gT%211c.J"
+    "@p360-document-db-stg.cluster-c8ynciexdc7u.us-east-2.docdb.amazonaws.com:27017"
+    "/p360_ope_qa?ssl=true&retryWrites=false&loadBalanced=false&connectTimeoutMS=10000"
+    "&tlsAllowInvalidCertificates=true&authSource=admin&authMechanism=SCRAM-SHA-1"
 )
-P360_DB = "p360_daily_docker"
+P360_DB = "p360_ope_qa"
 P360_COLLECTION = "patient"
 
 # Environment presets
+#
+# NOTE (2026-10-06): QA P360 was REPOINTED to a different DocDB. QA now lives on the
+# same cluster as staging (p360-document-db-stg...c8ynciexdc7u...) but in its OWN database
+# `p360_ope_qa`, with the svc_krc creds. The OLD QA connection (dev cluster, p360_daily_docker)
+# is kept as `qa_legacy` in case they switch back — do not delete it.
 P360_ENVIRONMENTS = {
     "qa": {
+        "uri": (
+            "mongodb://svc_krc:8gT%211c.J"
+            "@p360-document-db-stg.cluster-c8ynciexdc7u.us-east-2.docdb.amazonaws.com:27017"
+            "/p360_ope_qa?ssl=true&retryWrites=false&loadBalanced=false&connectTimeoutMS=10000"
+            "&tlsAllowInvalidCertificates=true&authSource=admin&authMechanism=SCRAM-SHA-1"
+        ),
+        "db": "p360_ope_qa",
+    },
+    "qa_legacy": {
+        # OLD QA pointer (pre-2026-10-06). dev cluster, p360_daily_docker. Kept in case QA reverts.
         "uri": (
             "mongodb://docdb_admin:P360DocumentDockerCopy0507"
             "@p360-document-db-dev.cluster-ccmb0vzyiebh.us-east-2.docdb.amazonaws.com:27017"
